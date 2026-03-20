@@ -47,6 +47,7 @@ int mouseX, mouseY;
 int menuBG;
 static bool audioOpened = false;
 static bool gameOverSoundPlayed = false;
+static int enemyCollisionCooldown = 0;
 
 struct MenuButtons {
 	Button start;
@@ -745,6 +746,14 @@ void updateGame()
 		nitroOn,
 		(float)ROAD_LEFT_X, (float)ROAD_RIGHT_X
 		);
+	// Ensure enemy cars stay within road boundaries
+	for (int i = 0; i < 3; i++) {
+		if (enemy.e[i].active) {
+			if (enemy.e[i].x < ROAD_LEFT_X) enemy.e[i].x = ROAD_LEFT_X;
+			if (enemy.e[i].x > ROAD_RIGHT_X - EnemySystem::ENEMY_W)
+				enemy.e[i].x = ROAD_RIGHT_X - EnemySystem::ENEMY_W;
+		}
+	}
 
 	if (page != PAGE_GAME) {
 		prevO = false; // don't carry key state across menus
@@ -827,6 +836,7 @@ void updateGame()
 		damageBlink = true;
 		blinkTicks = cfg.damageBlinkTicks;
 
+
 		// Reduce health
 		health.takeHit();
 
@@ -843,6 +853,44 @@ void updateGame()
 		if (roadSpeed > cfg.maxSpeed) roadSpeed = cfg.maxSpeed;
 	}
 
+	// Enemy car collision
+	if (!damageBlink && enemyCollisionCooldown == 0) {
+		for (int i = 0; i < 3; i++) {
+			if (enemy.e[i].active) {
+				if (carX < enemy.e[i].x + EnemySystem::ENEMY_W &&
+					carX + CAR_W > enemy.e[i].x &&
+					CAR_Y < enemy.e[i].y + EnemySystem::ENEMY_H &&
+					CAR_Y + CAR_H > enemy.e[i].y) {
+
+					damageBlink = true;
+					blinkTicks = cfg.damageBlinkTicks;
+					health.takeHit();
+
+					if (health.isGameOver()) {
+						goToGameOver();
+						return;
+					}
+
+					resetObstacles();
+
+					roadSpeed = cfg.crashSpeedReset;
+					if (roadSpeed < MIN_SPEED) roadSpeed = MIN_SPEED;
+					if (roadSpeed > cfg.maxSpeed) roadSpeed = cfg.maxSpeed;
+
+					// Push enemy car away and clamp to road
+					int pushDir = (carX < enemy.e[i].x) ? -1 : 1;
+					enemy.e[i].x += pushDir * 15.0f;
+					if (enemy.e[i].x < ROAD_LEFT_X) enemy.e[i].x = ROAD_LEFT_X;
+					if (enemy.e[i].x > ROAD_RIGHT_X - EnemySystem::ENEMY_W)
+						enemy.e[i].x = ROAD_RIGHT_X - EnemySystem::ENEMY_W;
+
+					enemyCollisionCooldown = 30;
+					break;
+				}
+			}
+		}
+	}
+
 	// Damage blink tick-down
 	if (damageBlink) {
 		blinkTicks--;
@@ -852,6 +900,10 @@ void updateGame()
 		}
 	}
 
+	// Enemy collision cooldown tick-down
+	if (enemyCollisionCooldown > 0) {
+		enemyCollisionCooldown--;
+	}
 	// Bat animation
 	updateBatAnimation();
 }
