@@ -1,476 +1,914 @@
 #include "iGraphics.h"
+#include "Enemy.hpp"
 #include "Button.hpp"
 #include "Obstacle.hpp"
+#include "Nitro.hpp"
 #include "HealthSystem.hpp"
-#include "Constants.hpp"
-#include "Car.hpp"
-#include "GameState.hpp"
-#include "MenuButtons.hpp"
-#include "Bat.hpp"
-#include "Enemy.hpp"
-#include <cstdlib>     
+#include <cstdlib>
 
-// Resource variables (couldn't be moved to headers due to iGraphics dependencies)
+
+int x, y;
+
+// ==============================
+//            CONSTANTS
+// ==============================
+const int SCREEN_W = 708;
+const int SCREEN_H = 1080;
+
+// ROAD
+const int ROAD_LEFT_X = 72;
+const int ROAD_RIGHT_X = 636;
+
+double roadOffsetY;                 // Vertical road scrolling
+const double MIN_SPEED = 4.0;
+double roadSpeed = MIN_SPEED;
+
+// CAR
+const int CAR_W = 157;
+const int CAR_H = 169;
+double carX;
+const int CAR_Y = 200;              // uplift distance from bottom
+
+// Bat drawing adjustment
+const int BAT_FRAMES = 10;
+int batImg[BAT_FRAMES];
+const int BAT_EXTRA_W = 24;
+const int BAT_OFFSET_X = -24;
+const int BAT_OFFSET_Y = 0;
+
+bool batPlaying = false;
+int batFrame = 0;
+
+
+// ==============================
+//         MENU / RESOURCES
+// ==============================
+int mouseX, mouseY;
+int menuBG;
+static bool audioOpened = false;
+static bool gameOverSoundPlayed = false;
+
+struct MenuButtons {
+	Button start;
+	Button highScores;
+	Button options;
+	Button gameExit;
+	Button easy;
+	Button medium;
+	Button hard;
+	Button credits;
+	Button controls;
+	Button back;
+} btn;
+
+// GAME RESOURCES
 int roadImgA;
 int roadImgB;
+int carImg;
+int carBrakedImg;
 int obsImg[OB_COUNT];
+NitroSystem nitro;
+int carLaneX[4];
 
-// Conditions
+EnemySystem enemy;
+
+// HEALTH + PAUSE
+HealthSystem health;
+bool gamePaused = false;
+bool prevP = false;
+
+
+// DAMAGE BLINK
+bool damageBlink = false;
+int blinkTicks = 0;
+
+// One-key "just pressed" tracking
 bool prevO = false;
+bool prevN = false;   // for edge-trigger
 
-// Pause variables
-bool isPaused = false;
-bool prevEscState = false; // To detect ESC key press (not hold)
+// ==============================
+//            STATE
+// ==============================
+enum Page {
+	PAGE_HOME,
+	PAGE_START,
+	PAGE_OPTIONS,
+	PAGE_CONTROLS,
+	PAGE_CREDITS,
+	PAGE_GAME,
+	PAGE_GAMEOVER
+};
 
-// Function declarations
+enum Difficulty {
+	DIFF_EASY,
+	DIFF_MEDIUM,
+	DIFF_HARD,
+};
+
+Page page = PAGE_HOME;
+Difficulty difficulty = DIFF_EASY;
+
+struct DifficultyConfig {
+	double maxSpeed;
+	double accelRate;
+	double brakeRate;
+	double frictionRate;
+	double steerMin;
+	double steerMax;
+
+	int damageBlinkTicks;
+	double crashSpeedReset;
+
+	ObstacleSpawnConfig obstacles;
+};
+
+DifficultyConfig cfg;
+
+// ==============================
+//          FORWARD DECLS
+// ==============================
 void drawHome();
 void drawStart();
 void drawOptions();
 void drawControls();
 void drawCredits();
-void drawEasyGame();
+void drawGame();
 void drawGameOver();
-void drawPauseScreen();
-void initGame();
 
-//=============================================================================
-// Fixed Update (called by iGraphics for continuous key press handling)
-//=============================================================================
+void initBackground();
+void initImages();
+
+void setDifficulty(Difficulty d);
+void initGame();
+void updateGame();
+void updateBatAnimation();
+
+// Button handlers
+void startButtonClickHandler();
+void backButtonClickHandler();
+void optionsButtonClickHandler();
+void controlsButtonClickHandler();
+void creditsButtonClickHandler();
+void easyButtonClickHandler();
+void mediumButtonClickHandler();
+void hardButtonClickHandler();
+
+//  AUDIO forward declarations
+void initAudio();
+void playBackgroundMusic();
+void stopBackgroundMusic();
+void playGameOverMusicOnce();
+
+// ==============================
+//              UTILS
+// ==============================
+bool inside(int mx, int my, int x1, int x2, int y1, int y2) {
+	return mx >= x1 && mx <= x2 && my >= y1 && my <= y2;
+}
+
+double clampDouble(double v, double lo, double hi) {
+	if (v < lo) return lo;
+	if (v > hi) return hi;
+	return v;
+}
+
+// ==============================
+//              DRAW
+// ==============================
+void iDraw()
+{
+	iClear();
+
+	switch (page) {
+	case PAGE_HOME:     drawHome();     break;
+	case PAGE_START:    drawStart();    break;
+	case PAGE_OPTIONS:  drawOptions();  break;
+	case PAGE_CONTROLS: drawControls(); break;
+	case PAGE_CREDITS:  drawCredits();  break;
+	case PAGE_GAME:     drawGame();     break;
+	case PAGE_GAMEOVER: drawGameOver(); break;
+	}
+}
+
+void iMouseMove(int mx, int my) {}
+
+void iPassiveMouseMove(int mx, int my)
+{
+	mouseX = mx;
+	mouseY = my;
+}
+
+void iMouse(int button, int state, int mx, int my)
+{
+	if (button != GLUT_LEFT_BUTTON || state != GLUT_DOWN) return;
+
+	//printf("x: %d\t y: %d\n", mx, my);
+
+	if (page == PAGE_HOME) {
+		if (mx >= 316 && mx <= 602 && my >= 240 && my <= 321) {
+			startButtonClickHandler();
+		}
+		else if (mx >= 316 && mx <= 549 && my >= 68 && my <= 149) {
+			optionsButtonClickHandler();
+		}
+		else if (mx >= 553 && mx <= 634 && my >= 68 && my <= 149) {
+			exit(0);
+		}
+	}
+	else if (page == PAGE_START) {
+		if (mx >= 312 && mx <= 392 && my >= 240 && my <= 320) {
+			backButtonClickHandler();
+		}
+		else if (mx >= 402 && mx <= 633 && my >= 240 && my <= 320) {
+			easyButtonClickHandler();
+		}
+		else if (mx >= 402 && mx <= 633 && my >= 154 && my <= 234) {
+			mediumButtonClickHandler();
+		}
+		else if (mx >= 402 && mx <= 633 && my >= 66 && my <= 146) {
+			hardButtonClickHandler();
+		}
+	}
+	else if (page == PAGE_OPTIONS) {
+		if (mx >= 268 && mx <= 348 && my >= 240 && my <= 320) {
+			backButtonClickHandler();
+		}
+		else if (mx >= 356 && mx <= 631 && my >= 240 && my <= 320) {
+			controlsButtonClickHandler();
+		}
+		else if (mx >= 356 && mx <= 630 && my >= 152 && my <= 232) {
+			creditsButtonClickHandler();
+		}
+	}
+	else if (page == PAGE_CONTROLS) {
+		if (mx >= 64 && mx <= 144 && my >= 652 && my <= 732) {
+			optionsButtonClickHandler();
+		}
+	}
+	else if (page == PAGE_CREDITS) {
+		if (mx >= 74 && mx <= 154 && my >= 532 && my <= 612) {
+			optionsButtonClickHandler();
+		}
+	}
+	else if (page == PAGE_GAME) {
+		// Left click swings bat in-game (disabled while paused)
+		if (!gamePaused) {
+			batPlaying = true;
+			batFrame = 0;
+		}
+	}
+	else if (page == PAGE_GAMEOVER) {
+		page = PAGE_HOME;
+		gameOverSoundPlayed = false;
+		playBackgroundMusic();
+	}
+}
 
 void fixedUpdate()
 {
-	// Handle continuous key presses for smooth movement
-	// This function is called automatically by iGraphics
-
-	if (isKeyPressed('w') || isSpecialKeyPressed(GLUT_KEY_UP))
-	{
-		// Accelerate - handled in updateGame
-	}
-	if (isKeyPressed('a') || isSpecialKeyPressed(GLUT_KEY_LEFT))
-	{
-		// Turn left - handled in updateGame
-	}
-	if (isKeyPressed('s') || isSpecialKeyPressed(GLUT_KEY_DOWN))
-	{
-		// Brake - handled in updateGame
-	}
-	if (isKeyPressed('d') || isSpecialKeyPressed(GLUT_KEY_RIGHT))
-	{
-		// Turn right - handled in updateGame
-	}
-
-	// Space bar for sound
-	if (isKeyPressed(' ')) {
-		// Playing the audio once
-		mciSendString("play ggsong from 0", NULL, 0, NULL);
-	}
-
-	// Check for ESC key press (27 is ASCII for Escape)
-	bool currentEscState = isKeyPressed(27); // Check if ESC is pressed
-
-	// Toggle pause only when ESC is pressed (not held)
-	if (easyGame && !isGameOver() && currentEscState && !prevEscState) {
-		isPaused = !isPaused; // Toggle pause state
-		printf("Game %s\n", isPaused ? "Paused" : "Resumed");
-	}
-
-	prevEscState = currentEscState; // Remember current state for next frame
+	updateGame();
 }
 
-//=============================================================================
-// INITIALIZATION
-//=============================================================================
+// ==============================
+//        INIT RESOURCES
+// ==============================
+void initBackground()
+{
+	menuBG = iLoadImage("Assets\\global\\menu_background.png");
+}
 
-void initImages() {
-	// Menu images
-	initMenuImages();
+void initImages()
+{
+	/*------------------------------------MENU------------------------------------*/
+	// GLOBAL
+	btn.back.normal = iLoadImage("Assets\\global\\buttons\\back.png");
+	btn.back.hover = iLoadImage("Assets\\global\\buttons\\back_hover.png");
 
-	// Game images
+	// HOME PAGE
+	btn.start.normal = iLoadImage("Assets\\home\\buttons\\start.png");
+	btn.highScores.normal = iLoadImage("Assets\\home\\buttons\\high_scores.png");
+	btn.options.normal = iLoadImage("Assets\\home\\buttons\\options.png");
+	btn.gameExit.normal = iLoadImage("Assets\\home\\buttons\\exit.png");
+
+	btn.start.hover = iLoadImage("Assets\\home\\buttons\\start_hover.png");
+	btn.highScores.hover = iLoadImage("Assets\\home\\buttons\\high_scores_hover.png");
+	btn.options.hover = iLoadImage("Assets\\home\\buttons\\options_hover.png");
+	btn.gameExit.hover = iLoadImage("Assets\\home\\buttons\\exit_hover.png");
+
+	// START PAGE
+	btn.easy.normal = iLoadImage("Assets\\start\\buttons\\easy.png");
+	btn.medium.normal = iLoadImage("Assets\\start\\buttons\\medium.png");
+	btn.hard.normal = iLoadImage("Assets\\start\\buttons\\hard.png");
+
+	btn.easy.hover = iLoadImage("Assets\\start\\buttons\\easy_hover.png");
+	btn.medium.hover = iLoadImage("Assets\\start\\buttons\\medium_hover.png");
+	btn.hard.hover = iLoadImage("Assets\\start\\buttons\\hard_hover.png");
+
+	// OPTIONS PAGE
+	btn.credits.normal = iLoadImage("Assets\\options\\buttons\\credits.png");
+	btn.controls.normal = iLoadImage("Assets\\options\\buttons\\controls.png");
+
+	btn.credits.hover = iLoadImage("Assets\\options\\buttons\\credits_hover.png");
+	btn.controls.hover = iLoadImage("Assets\\options\\buttons\\controls_hover.png");
+
+	/*------------------------------------GAME------------------------------------*/
 	roadImgA = iLoadImage("Assets\\game\\road.png");
 	roadImgB = iLoadImage("Assets\\game\\road.png");
 	carImg = iLoadImage("Assets\\game\\car.png");
 	carBrakedImg = iLoadImage("Assets\\game\\car_braked.png");
 
-	// Health images
-	loadHealthImages();
+	// BAT
+	batImg[0] = iLoadImage("Assets\\game\\bat\\bat0.png");
+	batImg[1] = iLoadImage("Assets\\game\\bat\\bat1.png");
+	batImg[2] = iLoadImage("Assets\\game\\bat\\bat2.png");
+	batImg[3] = iLoadImage("Assets\\game\\bat\\bat3.png");
+	batImg[4] = iLoadImage("Assets\\game\\bat\\bat4.png");
+	batImg[5] = iLoadImage("Assets\\game\\bat\\bat5.png");
+	batImg[6] = iLoadImage("Assets\\game\\bat\\bat6.png");
+	batImg[7] = iLoadImage("Assets\\game\\bat\\bat7.png");
+	batImg[8] = iLoadImage("Assets\\game\\bat\\bat8.png");
+	batImg[9] = iLoadImage("Assets\\game\\bat\\bat9.png");
 
-	// Bat images
-	loadBatImages();
-
-	// Enemy image
-	loadEnemyImage();
-
-	// Obstacle images
+	// OBSTACLES
 	for (int i = 0; i < OB_COUNT; i++) {
 		char path[128];
 		sprintf_s(path, "Assets//game//obstacles//obs%d.png", i);
 		obsImg[i] = iLoadImage(path);
 	}
+
+	// NITRO
+	nitro.loadImages();
+
+	enemy.loadImages();
+
+	health.loadImages();
 }
 
-void initGame() {
-	initCar();
-	initObstacleSystem(ROAD_LEFT_X, ROAD_RIGHT_X, SCREEN_H);
-	resetObstacles();
-	resetCar();
-	resetHealth();
-	resetBat();
-	resetEnemy();
-	roadSpeed = MIN_SPEED;
-	roadOffsetY = 0;
-	isPaused = false; // Reset pause state when starting new game
-	prevEscState = false;
-}
-
-
-
-//=============================================================================
-// DRAW FUNCTIONS
-//=============================================================================
-
-void drawHome() {
+// ==============================
+//             PAGES
+// ==============================
+void drawHome()
+{
 	iSetColor(0, 0, 0);
 	iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
+
 	iShowImage(0, 0, SCREEN_W, SCREEN_H, menuBG);
 
-	// Buttons
+	// buttons
 	iShowImage(316, 240, 286, 81, btn.start.normal);
 	iShowImage(316, 154, 346, 81, btn.highScores.normal);
 	iShowImage(316, 68, 233, 81, btn.options.normal);
 	iShowImage(553, 68, 81, 81, btn.gameExit.normal);
 
-	// Hovers
-	if (isMouseInside(mouseX, mouseY, 316, 602, 240, 321))
+	// hovers
+	if (inside(mouseX, mouseY, 316, 602, 240, 321)) {
 		iShowImage(316, 240, 286, 81, btn.start.hover);
-	else if (isMouseInside(mouseX, mouseY, 316, 546, 154, 235))
+	}
+	else if (inside(mouseX, mouseY, 316, 546, 154, 235)) {
 		iShowImage(316, 154, 346, 81, btn.highScores.hover);
-	else if (isMouseInside(mouseX, mouseY, 316, 549, 68, 149))
+	}
+	else if (inside(mouseX, mouseY, 316, 549, 68, 149)) {
 		iShowImage(316, 68, 233, 81, btn.options.hover);
-	else if (isMouseInside(mouseX, mouseY, 553, 634, 68, 149))
+	}
+	else if (inside(mouseX, mouseY, 553, 634, 68, 149)) {
 		iShowImage(553, 68, 81, 81, btn.gameExit.hover);
+	}
 }
 
-void drawStart() {
+void drawStart()
+{
 	iSetColor(0, 0, 0);
 	iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
 	iShowImage(0, 0, SCREEN_W, SCREEN_H, menuBG);
 
-	// Buttons
+	// BUTTONS
 	iShowImage(312, 240, 80, 80, btn.back.normal);
 	iShowImage(402, 240, 231, 80, btn.easy.normal);
 	iShowImage(402, 154, 231, 80, btn.medium.normal);
 	iShowImage(402, 66, 231, 80, btn.hard.normal);
 
-	// Hovers
-	if (isMouseInside(mouseX, mouseY, 312, 392, 240, 320))
+	// BUTTON_HOVERS
+	if (inside(mouseX, mouseY, 312, 392, 240, 320)) {
 		iShowImage(312, 240, 80, 80, btn.back.hover);
-	else if (isMouseInside(mouseX, mouseY, 402, 633, 240, 320))
+	}
+	else if (inside(mouseX, mouseY, 402, 633, 240, 320)) {
 		iShowImage(402, 240, 231, 80, btn.easy.hover);
-	else if (isMouseInside(mouseX, mouseY, 402, 633, 154, 234))
+	}
+	else if (inside(mouseX, mouseY, 402, 633, 154, 234)) {
 		iShowImage(402, 154, 231, 80, btn.medium.hover);
-	else if (isMouseInside(mouseX, mouseY, 402, 633, 38, 118))
+	}
+	else if (inside(mouseX, mouseY, 402, 633, 66, 146)) {
 		iShowImage(402, 66, 231, 80, btn.hard.hover);
+	}
 }
 
-void drawOptions() {
+
+
+void initAudio()
+{
+	if (audioOpened) return;
+	mciSendString("open \"Assets\\\\audio\\\\errand_day.mp3\" alias bgsong", NULL, 0, NULL);
+	mciSendString("open \"Assets\\\\audio\\\\game_over.mp3\" alias gosong", NULL, 0, NULL);
+	audioOpened = true;
+}
+
+void playBackgroundMusic()
+{
+	if (!audioOpened) initAudio();
+	mciSendString("stop bgsong", NULL, 0, NULL);
+	mciSendString("seek bgsong to start", NULL, 0, NULL);
+	mciSendString("play bgsong repeat", NULL, 0, NULL);
+}
+
+void stopBackgroundMusic()
+{
+	if (!audioOpened) return;
+	mciSendString("stop bgsong", NULL, 0, NULL);
+	mciSendString("seek bgsong to start", NULL, 0, NULL);
+}
+
+void playGameOverMusicOnce()
+{
+	if (!audioOpened) initAudio();
+	stopBackgroundMusic();
+	mciSendString("stop gosong", NULL, 0, NULL);
+	mciSendString("seek gosong to start", NULL, 0, NULL);
+	mciSendString("play gosong from 0", NULL, 0, NULL);
+}
+
+
+void drawOptions()
+{
 	iSetColor(0, 0, 0);
 	iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
 	iShowImage(0, 0, SCREEN_W, SCREEN_H, menuBG);
 
-	// Buttons
+	// BUTTONS
 	iShowImage(268, 240, 80, 80, btn.back.normal);
 	iShowImage(356, 240, 275, 80, btn.controls.normal);
 	iShowImage(356, 152, 274, 80, btn.credits.normal);
 
-	// Hovers
-	if (isMouseInside(mouseX, mouseY, 268, 348, 240, 320))
+	// BUTTON_HOVERS
+	if (inside(mouseX, mouseY, 268, 348, 240, 320)) {
 		iShowImage(268, 240, 80, 80, btn.back.hover);
-	else if (isMouseInside(mouseX, mouseY, 356, 631, 240, 320))
+	}
+	else if (inside(mouseX, mouseY, 356, 631, 240, 320)) {
 		iShowImage(356, 240, 275, 80, btn.controls.hover);
-	else if (isMouseInside(mouseX, mouseY, 356, 630, 152, 232))
+	}
+	else if (inside(mouseX, mouseY, 356, 630, 152, 232)) {
 		iShowImage(356, 152, 274, 80, btn.credits.hover);
+	}
 }
 
-void drawControls() {
+void drawControls()
+{
 	static int controlsBG = iLoadImage("Assets\\options\\controls\\controls_bg.png");
+	iShowImage(0, 0, SCREEN_W, SCREEN_H, controlsBG);
+
 	static int goBack = iLoadImage("Assets\\options\\controls\\go_back.png");
 	static int controlsPreview = iLoadImage("Assets\\options\\controls\\controls_preview.png");
 
-	iShowImage(0, 0, SCREEN_W, SCREEN_H, controlsBG);
 	iShowImage(64, 652, 80, 80, btn.back.normal);
 	iShowImage(156, 652, 221, 80, goBack);
 	iShowImage(64, 96, 471, 489, controlsPreview);
 
-	if (isMouseInside(mouseX, mouseY, 64, 144, 652, 732))
+	if (inside(mouseX, mouseY, 64, 144, 652, 732)) {
 		iShowImage(64, 652, 80, 80, btn.back.hover);
+	}
 }
 
-void drawCredits() {
+void drawCredits()
+{
 	static int creditsBG = iLoadImage("Assets\\options\\credits\\credits_bg.png");
 	iShowImage(0, 0, SCREEN_W, SCREEN_H, creditsBG);
+
 	iShowImage(74, 532, 80, 80, btn.back.normal);
-
-	if (isMouseInside(mouseX, mouseY, 74, 154, 532, 612))
+	if (inside(mouseX, mouseY, 74, 154, 532, 612)) {
 		iShowImage(74, 532, 80, 80, btn.back.hover);
+	}
 }
 
+// ==============================
+//          BUTTON HANDLERS
+// ==============================
+void startButtonClickHandler()   { page = PAGE_START; }
+void backButtonClickHandler()    { page = PAGE_HOME; }
+void optionsButtonClickHandler() { page = PAGE_OPTIONS; }
+void controlsButtonClickHandler(){ page = PAGE_CONTROLS; }
+void creditsButtonClickHandler() { page = PAGE_CREDITS; }
 
-void drawGameOver() {
-	iSetColor(0, 0, 0);
-	iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
-	iSetColor(255, 0, 0);
-	iText(SCREEN_W / 2 - 100, SCREEN_H / 2, "GAME OVER", GLUT_BITMAP_TIMES_ROMAN_24);
-	iSetColor(255, 255, 255);
-	iText(SCREEN_W / 2 - 150, SCREEN_H / 2 - 50, "Click anywhere to return to menu", GLUT_BITMAP_HELVETICA_18);
+void easyButtonClickHandler()
+{
+	setDifficulty(DIFF_EASY);
+	page = PAGE_GAME;
+	initGame();
 }
 
-void drawPauseScreen() {
-	// Draw a semi-transparent overlay using a pattern
-	iSetColor(0, 0, 0);
-	// Draw a grid pattern to simulate transparency
-	for (int i = 0; i < SCREEN_W; i += 4) {
-		for (int j = 0; j < SCREEN_H; j += 4) {
-			iFilledRectangle(i, j, 2, 2);
-		}
+void mediumButtonClickHandler()
+{
+	setDifficulty(DIFF_MEDIUM);
+	page = PAGE_GAME;
+	initGame();
+}
+
+void hardButtonClickHandler()
+{
+	setDifficulty(DIFF_HARD);
+	page = PAGE_GAME;
+	initGame();
+}
+
+// ==============================
+//           DIFFICULTY
+// ==============================
+void setDifficulty(Difficulty d)
+{
+	difficulty = d;
+
+
+	// You can tune these numbers freely.
+	if (difficulty == DIFF_EASY) {
+		cfg.maxSpeed = 16.0;
+		cfg.accelRate = 0.13;
+		cfg.brakeRate = 0.42;
+		cfg.frictionRate = 0.04;
+		cfg.steerMin = 3.8;
+		cfg.steerMax = 9.5;
+
+		cfg.damageBlinkTicks = 45;
+		cfg.crashSpeedReset = 8.0;
+
+		cfg.obstacles.maxActive = 2;
+		cfg.obstacles.spawnChancePercent = 10;
+		cfg.obstacles.baseDelayNoObs = 185;  cfg.obstacles.rangeDelayNoObs = 300;
+		cfg.obstacles.baseDelayWithObs = 260; cfg.obstacles.rangeDelayWithObs = 340;
+
+		enemy.maxEnemy = 2;
+		enemy.spawnMinTicks = 99999;
+		enemy.spawnRangeTicks = 0;
+	}
+	else if (difficulty == DIFF_MEDIUM) {
+		cfg.maxSpeed = 18.0;
+		cfg.accelRate = 0.15;
+		cfg.brakeRate = 0.40;
+		cfg.frictionRate = 0.04;
+		cfg.steerMin = 3.5;
+		cfg.steerMax = 10.0;
+
+		cfg.damageBlinkTicks = 40;
+		cfg.crashSpeedReset = 9.0;
+
+		cfg.obstacles.maxActive = 3;
+		cfg.obstacles.spawnChancePercent = 25;
+		cfg.obstacles.baseDelayNoObs = 145;  cfg.obstacles.rangeDelayNoObs = 260;
+		cfg.obstacles.baseDelayWithObs = 210; cfg.obstacles.rangeDelayWithObs = 290;
+
+		enemy.maxEnemy = 4;
+		enemy.spawnMinTicks = 520;
+		enemy.spawnRangeTicks = 320;
+	}
+	else { // DIFF_HARD
+		cfg.maxSpeed = 20.0;
+		cfg.accelRate = 0.17;
+		cfg.brakeRate = 0.38;
+		cfg.frictionRate = 0.035;
+		cfg.steerMin = 3.2;
+		cfg.steerMax = 10.5;
+
+		cfg.damageBlinkTicks = 35;
+		cfg.crashSpeedReset = 10.0;
+
+		cfg.obstacles.maxActive = 4;
+		cfg.obstacles.spawnChancePercent = 35;
+		cfg.obstacles.baseDelayNoObs = 140;  cfg.obstacles.rangeDelayNoObs = 240;
+		cfg.obstacles.baseDelayWithObs = 185; cfg.obstacles.rangeDelayWithObs = 170;
+
+		enemy.maxEnemy = 6;
+		enemy.spawnMinTicks = 450;
+		enemy.spawnRangeTicks = 280;
 	}
 
-	// Draw pause text
-	iSetColor(255, 255, 255);
-	iText(SCREEN_W / 2 - 80, SCREEN_H / 2 + 50, "GAME PAUSED", GLUT_BITMAP_TIMES_ROMAN_24);
-	iText(SCREEN_W / 2 - 150, SCREEN_H / 2, "Click anywhere to resume", GLUT_BITMAP_HELVETICA_18);
-	iText(SCREEN_W / 2 - 120, SCREEN_H / 2 - 30, "Press ESC to pause/unpause", GLUT_BITMAP_HELVETICA_18);
+	// Push obstacle config into obstacle system
+	setObstacleSpawnConfig(cfg.obstacles);
+
+	// Nitro Allowance Levels
+	nitro.setAllowed(difficulty != DIFF_EASY);
 }
 
-void drawEasyGame() {
-	if (isGameOver()) return;
+void goToGameOver()
+{
+	page = PAGE_GAMEOVER;
+	if (!gameOverSoundPlayed) {
+		playGameOverMusicOnce();
+		gameOverSoundPlayed = true;
+	}
+}
 
+// LANE 
+void initLanes()
+{
+	double usable = (ROAD_RIGHT_X - ROAD_LEFT_X - CAR_W);
+	double step = usable / 3.0;
+	for (int i = 0; i < 4; i++) carLaneX[i] = (int)(ROAD_LEFT_X + i * step);
+}
+
+// ==============================
+//             GAME
+// ==============================
+void initGame()
+{
+	double roadCenter = (ROAD_LEFT_X + ROAD_RIGHT_X) / 2.0;
+	carX = roadCenter - (CAR_W / 2.0);
+
+	roadSpeed = MIN_SPEED;
+	roadOffsetY = 0;
+
+	initLanes();
+
+	prevO = false;
+
+	initObstacleSystem(ROAD_LEFT_X, ROAD_RIGHT_X, SCREEN_H);
+	setObstacleSpawnConfig(cfg.obstacles);
+	resetObstacles();
+
+	damageBlink = false;
+	blinkTicks = 0;
+
+	batPlaying = false;
+	batFrame = 0;
+
+	nitro.reset();
+	enemy.reset();
+	health.reset();
+	gamePaused = false;
+	prevP = false;
+}
+
+void drawGame()
+{
 	bool brakeHeld = isKeyPressed('s') || isSpecialKeyPressed(GLUT_KEY_DOWN);
-	bool drawCarNow = shouldDrawCar();
 
-	// Road
+	bool drawCarNow = true;
+	if (damageBlink) {
+		drawCarNow = ((blinkTicks / 6) % 2 == 0);
+	}
+
+	// INFINITE ROAD DRAW
 	iShowImage(0, (int)roadOffsetY, SCREEN_W, SCREEN_H, roadImgA);
 	iShowImage(0, (int)roadOffsetY + SCREEN_H, SCREEN_W, SCREEN_H, roadImgB);
 
-	// Car
+	// CAR DRAW
 	if (drawCarNow) {
-		if (isBatPlaying()) {
-			iShowImage((int)carX + BAT_OFFSET_X, CAR_Y + BAT_OFFSET_Y,
-				CAR_W + BAT_EXTRA_W, CAR_H, getCurrentBatImage());
+		if (nitro.isActive()) {
+			iShowImage((int)carX, CAR_Y + nitro.carDrawYOffset(), CAR_W, 204, nitro.carNitroImg);
 		}
 		else {
-			iShowImage((int)carX, CAR_Y, CAR_W, CAR_H,
-				brakeHeld ? carBrakedImg : carImg);
-		}
-	}
-
-	// Obstacles
-	for (int i = 0; i < MAX_OBS_ON_SCREEN; i++) {
-		if (!gObs[i].active) continue;
-		iShowImage((int)gObs[i].x, (int)gObs[i].y,
-			gObs[i].width, gObs[i].height, obsImg[gObs[i].imgIndex]);
-	}
-
-	// Draw enemy
-	drawEnemy();
-
-	// Health display
-	int currentHpImg = getCurrentHealthImage();
-	if (currentHpImg != -1)
-		iShowImage(20, SCREEN_H - 100, 200, 50, currentHpImg);
-
-	iSetColor(255, 255, 255);
-	char healthTxt[50];
-	sprintf_s(healthTxt, "Health: %d/9", getRemainingHealth());
-	iText(20, SCREEN_H - 120, healthTxt, GLUT_BITMAP_HELVETICA_18);
-
-	// Debug info
-	char txt[120];
-	sprintf_s(txt, "Speed: %.1f   carX: %.0f      %s",
-		roadSpeed, carX, isPaused ? "PAUSED" : "PLAYING");
-	iText(10, SCREEN_H - 25, txt, GLUT_BITMAP_HELVETICA_18);
-
-	// Draw pause screen on top if game is paused
-	if (isPaused) {
-		drawPauseScreen();
-	}
-
-	
-}
-
-//=============================================================================
-// iGraphics Callbacks
-//=============================================================================
-
-void iDraw() {
-	iClear();
-
-	if (homePage) drawHome();
-	else if (startPage) drawStart();
-	else if (optionsPage) drawOptions();
-	else if (controlsPage) drawControls();
-	else if (creditsPage) drawCredits();
-	else if (easyGame) drawEasyGame();
-	else if (gameOverPage) drawGameOver();
-}
-
-void iMouseMove(int mx, int my) {
-	// Optional: Add mouse move handling if needed
-}
-
-void iPassiveMouseMove(int mx, int my) {
-	mouseX = mx;
-	mouseY = my;
-}
-
-void iMouse(int button, int state, int mx, int my) {
-	if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {
-		printf("Mouse Click - x: %d\t y: %d\n", mx, my);
-
-		// If game is paused, clicking anywhere resumes the game
-		if (easyGame && isPaused) {
-			isPaused = false;
-			printf("Game Resumed by mouse click\n");
-			return; // Don't process other clicks when paused
-		}
-
-		if (homePage) {
-			if (isMouseInside(mx, my, 316, 602, 240, 321)) goToStart();
-			else if (isMouseInside(mx, my, 316, 549, 68, 149)) goToOptions();
-			else if (isMouseInside(mx, my, 553, 634, 68, 149)) exit(0);
-		}
-		else if (startPage) {
-			if (isMouseInside(mx, my, 312, 392, 240, 320)) goToHome();
-			else if (isMouseInside(mx, my, 402, 633, 240, 320)) {
-				goToEasyGame();
-				initGame();
+			if (batPlaying) {
+				iShowImage((int)carX + BAT_OFFSET_X, CAR_Y + BAT_OFFSET_Y,
+					CAR_W + BAT_EXTRA_W, CAR_H,
+					batImg[batFrame]);
+			}
+			else {
+				iShowImage((int)carX, CAR_Y, CAR_W, CAR_H,
+					brakeHeld ? carBrakedImg : carImg);
 			}
 		}
-		else if (optionsPage) {
-			if (isMouseInside(mx, my, 268, 348, 240, 320)) goToHome();
-			else if (isMouseInside(mx, my, 356, 631, 240, 320)) goToControls();
-			else if (isMouseInside(mx, my, 356, 630, 152, 232)) goToCredits();
-		}
-		else if (controlsPage) {
-			if (isMouseInside(mx, my, 64, 144, 652, 732)) goToOptions();
-		}
-		else if (creditsPage) {
-			if (isMouseInside(mx, my, 74, 154, 532, 612)) goToOptions();
-		}
-		else if (easyGame && !isPaused) {
-			startBat();
-		}
-		else if (gameOverPage) {
-			goToHome();
-		}
 	}
+
+
+	enemy.draw();
+
+	// OBSTACLES DRAW
+	for (int i = 0; i < OB_CAPACITY; i++) {
+		if (!gObs[i].active) continue;
+
+		iShowImage((int)gObs[i].x, (int)gObs[i].y,
+			gObs[i].width, gObs[i].height,
+			obsImg[gObs[i].imgIndex]);
+	}
+
+	// NITRO DRAW
+	nitro.drawPickups();
+	nitro.drawMeter();
+
+	// HEALTH HUD
+	health.draw(SCREEN_W, SCREEN_H);
+
+	// PAUSE OVERLAY
+	if (gamePaused) {
+		iSetColor(0, 0, 0);
+		iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
+		iSetColor(255, 255, 255);
+		iText(SCREEN_W / 2 - 50, SCREEN_H / 2 + 20, "PAUSED", GLUT_BITMAP_HELVETICA_18);
+		iText(SCREEN_W / 2 - 150, SCREEN_H / 2 - 10, "Press Esc to Resume, Q to Quit", GLUT_BITMAP_HELVETICA_18);
+	}
+
+	// REAL-TIME DEBUG
+	iSetColor(255, 255, 255);
+	char txt[160];
+	const char* diffName = (difficulty == DIFF_EASY) ? "Easy" : (difficulty == DIFF_MEDIUM) ? "Medium" : "Hard";
+	sprintf_s(txt, "Mode: %s   Speed: %.1f   carX: %.0f", diffName, roadSpeed, carX);
+	iText(10, SCREEN_H - 25, txt, GLUT_BITMAP_HELVETICA_18);
 }
 
-// We don't need iKeyboard or iSpecialKeyboard functions anymore
-// All keyboard handling is done in fixedUpdate
+// GAME REFRESH
+void updateGame()
+{
 
-void updateGame() {
-	// Don't update game logic if paused or game over or not in game
-	if (isGameOver() || !easyGame || isPaused) {
+	// ---- Pause toggle (edge-triggered) ----
+	bool nowEsc = (isKeyPressed(27) != 0);   // 27 = ESC
+
+	if (nowEsc && !prevP) {
+		gamePaused = !gamePaused;
+	}
+	prevP = nowEsc;
+
+	if (gamePaused) {
+		// Quit to home while paused (optional but requested)
+		if (isKeyPressed('q') || isKeyPressed('Q')) {
+			page = PAGE_HOME;
+			gameOverSoundPlayed = false;
+			playBackgroundMusic();
+		}
+		return; // stop updating world
+	}
+
+	setObstacleSpawnEnabled(!nitro.isActive());
+
+	bool nitroOn = nitro.isActive();
+
+
+
+	carX = enemy.update(
+		(float)roadSpeed,
+		(float)carX, (float)CAR_Y, (float)CAR_W, (float)CAR_H,
+		nitroOn,
+		(float)ROAD_LEFT_X, (float)ROAD_RIGHT_X
+		);
+
+	if (page != PAGE_GAME) {
+		prevO = false; // don't carry key state across menus
 		return;
 	}
 
-	// Bat trigger
+	// O key triggers bat swing once (edge-triggered)
 	bool nowO = (isKeyPressed('o') != 0);
-	if (nowO && !prevO) startBat();
+	if (nowO && !prevO) {
+		batPlaying = true;
+		batFrame = 0;
+	}
 	prevO = nowO;
 
-	// Input states
+	// N key triggers nitro
+	bool nowN = (isKeyPressed('n') || isKeyPressed('N')) != 0;
+	if (nowN && !prevN) nitro.tryActivate();
+	prevN = nowN;
+
+	// Steering depends on speed
 	bool leftHeld = isKeyPressed('a') || isSpecialKeyPressed(GLUT_KEY_LEFT);
 	bool rightHeld = isKeyPressed('d') || isSpecialKeyPressed(GLUT_KEY_RIGHT);
-	bool accelerateHeld = isKeyPressed('w') || isSpecialKeyPressed(GLUT_KEY_UP);
-	bool brakeHeld = isKeyPressed('s') || isKeyPressed(' ') || isSpecialKeyPressed(GLUT_KEY_DOWN);
+
+	double t = (roadSpeed - MIN_SPEED) / (cfg.maxSpeed - MIN_SPEED);
+	t = clampDouble(t, 0.0, 1.0);
+	double steerThisFrame = cfg.steerMin + t * (cfg.steerMax - cfg.steerMin);
+
+	if (leftHeld)  carX -= steerThisFrame;
+	if (rightHeld) carX += steerThisFrame;
 
 	// Speed control
+	bool accelerateHeld = isKeyPressed('w') || isSpecialKeyPressed(GLUT_KEY_UP);
+	bool brakeHeld = isKeyPressed('s') || isSpecialKeyPressed(GLUT_KEY_DOWN);
+
 	if (accelerateHeld) {
-		roadSpeed += ACCEL_RATE;
-		if (roadSpeed > MAX_SPEED) roadSpeed = MAX_SPEED;
+		roadSpeed += cfg.accelRate;
+		if (roadSpeed > cfg.maxSpeed) roadSpeed = cfg.maxSpeed;
 	}
+
 	if (brakeHeld) {
-		roadSpeed -= BRAKE_RATE;
+		roadSpeed -= cfg.brakeRate;
 		if (roadSpeed < MIN_SPEED) roadSpeed = MIN_SPEED;
+		if (roadSpeed > cfg.maxSpeed) roadSpeed = cfg.maxSpeed;
 	}
+
 	if (!accelerateHeld && !brakeHeld) {
-		roadSpeed -= FRICTION_RATE;
+		roadSpeed -= cfg.frictionRate;
 		if (roadSpeed < MIN_SPEED) roadSpeed = MIN_SPEED;
 	}
 
-	// Update positions
-	updateCarPosition(leftHeld, rightHeld, roadSpeed);
+	// Road scroll
 	roadOffsetY -= roadSpeed;
-	if (roadOffsetY <= -SCREEN_H) roadOffsetY += SCREEN_H;
 
-	// Update obstacles
+	// endless
+	if (roadOffsetY <= -SCREEN_H)
+		roadOffsetY += SCREEN_H;
+
+	// Clamp to road
+	carX = clampDouble(carX, ROAD_LEFT_X, ROAD_RIGHT_X - CAR_W);
+
+	float drawCarY = (float)CAR_Y + (float)nitro.carDrawYOffset();
+	float drawCarH = (float)nitro.carDrawH(CAR_H);
+
+	nitro.update(
+		(float)roadSpeed,
+		carLaneX,
+		(float)carX, drawCarY, (float)CAR_W, drawCarH,
+		cfg.maxSpeed,
+		roadSpeed
+		);
+
+
+
+	// Obstacles
+
 	updateObstacles((float)roadSpeed);
 
-	// Update enemy
-	updateEnemy(roadSpeed);
+	// Collision -> blink + reset obstacles + speed penalty
+	if (!damageBlink && checkObstacleCollision((float)carX, (float)CAR_Y, (float)CAR_W, (float)CAR_H)) {
+		damageBlink = true;
+		blinkTicks = cfg.damageBlinkTicks;
 
-	// Collision detection
-	if (!damageBlink) {
-		// Check obstacle collision
-		if (checkObstacleCollision((float)carX, (float)CAR_Y, (float)CAR_W, (float)CAR_H)) {
-			triggerDamage();
-			decreaseHealth();
+		// Reduce health
+		health.takeHit();
 
-			if (isGameOver()) {
-				goToGameOver();
-				mciSendString("stop bgsong", NULL, 0, NULL);  // Stop background music
-				mciSendString("play ggsong from 0", NULL, 0, NULL);  // Play game over song
-			}
-
-			resetObstacles();
-			roadSpeed = 8;
-			if (roadSpeed < MIN_SPEED) roadSpeed = MIN_SPEED;
+		// Check game over
+		if (health.isGameOver()) {
+			goToGameOver();
+			return;
 		}
 
-		// Check enemy collision (separate from obstacles)
-		if (checkEnemyCollision((float)carX, (float)CAR_Y, (float)CAR_W, (float)CAR_H)) {
-			triggerDamage();
-			decreaseHealth();
+		resetObstacles();
 
-			if (isGameOver()) {
-				goToGameOver();
-				mciSendString("stop bgsong", NULL, 0, NULL);  // Stop background music
-				mciSendString("play ggsong from 0", NULL, 0, NULL);  // Play game over song
-			}
+		roadSpeed = cfg.crashSpeedReset;
+		if (roadSpeed < MIN_SPEED) roadSpeed = MIN_SPEED;
+		if (roadSpeed > cfg.maxSpeed) roadSpeed = cfg.maxSpeed;
+	}
 
-			// Enemy disappears on collision
-			enemy.active = 0;
-			roadSpeed = 8;
-			if (roadSpeed < MIN_SPEED) roadSpeed = MIN_SPEED;
+	// Damage blink tick-down
+	if (damageBlink) {
+		blinkTicks--;
+		if (blinkTicks <= 0) {
+			damageBlink = false;
+			blinkTicks = 0;
 		}
 	}
 
-	// Update effects
-	updateDamageBlink();
+	// Bat animation
 	updateBatAnimation();
 }
 
-//=============================================================================
-// Main
-//=============================================================================
+void updateBatAnimation()
+{
+	static int batDelayCounter = 0;
+	const int batFrameDelay = 2;   // bigger = slower animation
 
-int main() {
-	//Opening/Loading the audio files
-	mciSendString("open \"Audios//background.mp3\" alias bgsong", NULL, 0, NULL);
-	mciSendString("open \"Audios//gameover.mp3\" alias ggsong", NULL, 0, NULL);
+	if (!batPlaying) return;
 
-	// Playing the background audio on repeat
-	mciSendString("play bgsong repeat", NULL, 0, NULL);
+	batDelayCounter++;
 
+	if (batDelayCounter >= batFrameDelay) {
+		batFrame++;
+		batDelayCounter = 0;
+	}
+
+	if (batFrame >= BAT_FRAMES) {
+		batPlaying = false;
+		batFrame = 0;
+		batDelayCounter = 0;
+	}
+}
+
+
+void drawGameOver()
+{
+	iSetColor(0, 0, 0);
+	iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
+
+	iSetColor(255, 255, 255);
+	iText(SCREEN_W / 2 - 70, SCREEN_H / 2 + 30, "GAME OVER", GLUT_BITMAP_HELVETICA_18);
+	iText(SCREEN_W / 2 - 170, SCREEN_H / 2, "Click to return to Home", GLUT_BITMAP_HELVETICA_18);
+}
+
+// ==============================
+//              MAIN
+// ==============================
+int main()
+{
 	iInitialize(SCREEN_W, SCREEN_H, "Errand Day");
 
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	initBackground();
 	initImages();
+	initAudio();
+	playBackgroundMusic();
+
+	// Default difficulty (also pushes obstacle config)
+	setDifficulty(DIFF_EASY);
+
+	// Update timer
 	iSetTimer(12, updateGame);
-	
-	printf("Game started. Press ESC to pause.\n");
 
 	iStart();
-
 	return 0;
 }
