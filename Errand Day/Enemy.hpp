@@ -124,7 +124,7 @@ struct EnemySystem {
 		return c;
 	}
 
-	void spawnOne(float carX, float carY, float carW) {
+	void spawnOne(float carX, float carY, float carW, float roadLeft, float roadRight) {
 		if (!enabled) return;
 		if (activeCount() >= maxEnemy) return;
 
@@ -148,9 +148,17 @@ struct EnemySystem {
 		e[idx].hitCooldown = 0;
 
 		e[idx].y = carY - 260.0f;
-		e[idx].x = (e[idx].side == -1)
+
+		// Calculate spawn position
+		float spawnX = (e[idx].side == -1)
 			? (carX - ENEMY_W - farGap)
 			: (carX + carW + farGap);
+
+		// Clamp to road boundaries
+		if (spawnX < roadLeft) spawnX = roadLeft;
+		if (spawnX > roadRight - ENEMY_W) spawnX = roadRight - ENEMY_W;
+
+		e[idx].x = spawnX;
 	}
 
 	static float moveToward(float v, float target, float step) {
@@ -172,7 +180,7 @@ struct EnemySystem {
 		// spawn control
 		if (spawnCooldown > 0) spawnCooldown--;
 		if (spawnCooldown <= 0) {
-			if (!nitroOn) spawnOne(carX, carY, carW);
+			if (!nitroOn) spawnOne(carX, carY, carW, roadLeft, roadRight);
 			spawnCooldown = spawnMinTicks + (spawnRangeTicks ? (rand() % (spawnRangeTicks + 1)) : 0);
 		}
 
@@ -264,9 +272,15 @@ struct EnemySystem {
 						if (carX < roadLeft) carX = roadLeft;
 						if (carX > roadRight - carW) carX = roadRight - carW;
 
+						// Also push the enemy car in opposite direction and clamp to road
+						e[i].x -= e[i].side * bumpPush;
+						if (e[i].x < roadLeft) e[i].x = roadLeft;
+						if (e[i].x > roadRight - ENEMY_W) e[i].x = roadRight - ENEMY_W;
+
 						e[i].hitCooldown = 45; // ~0.75s
 						if (outPlayerHit) *outPlayerHit = 1;
 					}
+					
 
 					// After contact moment, go back out (or end)
 					e[i].bumpDir = 1;
