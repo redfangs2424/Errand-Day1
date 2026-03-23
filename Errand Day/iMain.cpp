@@ -36,6 +36,12 @@ const int BAT_EXTRA_W = 24;
 const int BAT_OFFSET_X = -24;
 const int BAT_OFFSET_Y = 0;
 
+// BAT HITBOX CONFIGURATION - INCREASED RANGE
+const int BAT_HITBOX_EXTRA_W = 80;   // Additional width for hitbox (increased from 0)
+const int BAT_HITBOX_EXTRA_H = 30;   // Additional height for hitbox (increased from 0)
+const int BAT_HITBOX_OFFSET_X = -20; // Adjust X position offset for better coverage
+const float BAT_KNOCKBACK_FORCE = 35.0f; // Knockback force when hitting enemies
+
 bool batPlaying = false;
 int batFrame = 0;
 
@@ -86,6 +92,7 @@ int blinkTicks = 0;
 // One-key "just pressed" tracking
 bool prevO = false;
 bool prevN = false;   // for edge-trigger
+bool prevB = false;   // For bat click edge-trigger tracking
 
 // ==============================
 //            STATE
@@ -142,6 +149,7 @@ void initImages();
 void setDifficulty(Difficulty d);
 void initGame();
 void updateGame();
+void handleBatSwing();
 void updateBatAnimation();
 
 // Button handlers
@@ -627,6 +635,7 @@ void initGame()
 	initLanes();
 
 	prevO = false;
+	prevB = false;
 
 	initObstacleSystem(ROAD_LEFT_X, ROAD_RIGHT_X, SCREEN_H);
 	setObstacleSpawnConfig(cfg.obstacles);
@@ -676,7 +685,7 @@ void drawGame()
 		}
 	}
 
-
+	// Draw enemies (this now includes explosion drawing)
 	enemy.draw();
 
 	// OBSTACLES DRAW
@@ -710,6 +719,53 @@ void drawGame()
 	const char* diffName = (difficulty == DIFF_EASY) ? "Easy" : (difficulty == DIFF_MEDIUM) ? "Medium" : "Hard";
 	sprintf_s(txt, "Mode: %s   Speed: %.1f   carX: %.0f", diffName, roadSpeed, carX);
 	iText(10, SCREEN_H - 25, txt, GLUT_BITMAP_HELVETICA_18);
+}
+
+// UPDATED: Function to handle bat swing collision with enemies with increased range
+void handleBatSwing() {
+	if (!batPlaying) return;
+
+	// Get bat position with configurable offsets for better reach
+	int batX = (int)carX + BAT_OFFSET_X + BAT_HITBOX_OFFSET_X;
+	int batY = CAR_Y + BAT_OFFSET_Y;
+
+	// Create larger hitbox for better reach (INCREASED RANGE)
+	int batW = CAR_W + BAT_EXTRA_W + BAT_HITBOX_EXTRA_W;
+	int batH = CAR_H + BAT_HITBOX_EXTRA_H;
+
+	// Check if bat hit any enemy (only once per swing)
+	static bool hitProcessed = false;
+
+	if (batFrame == 0) {
+		hitProcessed = false;  // Reset when swing starts
+	}
+
+	if (!hitProcessed && batFrame >= 3 && batFrame <= 7) {  // Check collision during mid-swing
+		int hitIndex = enemy.checkBatHit(batX, batY, batW, batH);
+		if (hitIndex >= 0) {
+			enemy.reduceHealth(hitIndex);
+			hitProcessed = true;
+
+			// Add knockback to push enemies away after hit for safer distance
+			if (hitIndex >= 0 && hitIndex < 3 && enemy.e[hitIndex].active) {
+				// Determine push direction based on relative position
+				float pushDir = (enemy.e[hitIndex].x < carX) ? -BAT_KNOCKBACK_FORCE : BAT_KNOCKBACK_FORCE;
+				enemy.e[hitIndex].x += pushDir;
+
+				// Clamp to road boundaries
+				if (enemy.e[hitIndex].x < ROAD_LEFT_X)
+					enemy.e[hitIndex].x = (float)ROAD_LEFT_X;
+				if (enemy.e[hitIndex].x > ROAD_RIGHT_X - EnemySystem::ENEMY_W)
+					enemy.e[hitIndex].x = (float)(ROAD_RIGHT_X - EnemySystem::ENEMY_W);
+
+				// Also push the enemy slightly back (negative Y direction) to create more distance
+				enemy.e[hitIndex].y -= 15.0f;
+				if (enemy.e[hitIndex].y < CAR_Y - 100) {
+					enemy.e[hitIndex].y = (float)(CAR_Y - 100);
+				}
+			}
+		}
+	}
 }
 
 // GAME REFRESH
@@ -904,8 +960,10 @@ void updateGame()
 	if (enemyCollisionCooldown > 0) {
 		enemyCollisionCooldown--;
 	}
-	// Bat animation
+
+	// Bat animation and collision handling
 	updateBatAnimation();
+	handleBatSwing();  // Check bat collision with enemies with increased range
 }
 
 void updateBatAnimation()
