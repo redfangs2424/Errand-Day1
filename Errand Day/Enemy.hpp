@@ -24,12 +24,28 @@ struct EnemyCar {
 	float attackX;      // fixed "bump-in" target during this attempt
 
 	int hitCooldown;    // ticks before enemy can score another hit
+
+	// NEW: Health system for enemy cars (3 health levels)
+	int health;         // current health (3 = full, 2 = damaged, 1 = critical, 0 = dead)
+	static const int MAX_HEALTH = 3;  // Enemy takes 3 hits to destroy
 };
 
 struct EnemySystem {
 
 	static const int ENEMY_W = 116;
 	static const int ENEMY_H = 169;
+
+	// Explosion system (single image)
+	int explosionImg;
+
+	struct Explosion {
+		bool active;
+		float x, y;
+		int duration;      // How long to show explosion (in ticks)
+		int width, height;
+	};
+
+	Explosion explosions[5];  // Max 5 simultaneous explosions
 
 	// tweakables
 	int enabled;
@@ -63,6 +79,7 @@ struct EnemySystem {
 
 	// runtime
 	int imgEnemy;
+	int imgEnemyHP[4];  // Array for health images (0 unused, 1-3 for health levels)
 	EnemyCar e[3];
 	int spawnCooldown;
 
@@ -100,16 +117,86 @@ struct EnemySystem {
 
 		imgEnemy = -1;
 
-		for (int i = 0; i < 3; i++) e[i].active = 0;
+		// Initialize health images to -1
+		for (int i = 0; i <= EnemyCar::MAX_HEALTH; i++) {
+			imgEnemyHP[i] = -1;
+		}
+
+		// Initialize explosion image to -1
+		explosionImg = -1;
+
+		// Initialize explosions
+		for (int i = 0; i < 5; i++) {
+			explosions[i].active = false;
+		}
+
+		for (int i = 0; i < 3; i++) {
+			e[i].active = 0;
+			e[i].health = EnemyCar::MAX_HEALTH;
+		}
 		spawnCooldown = spawnMinTicks;
 	}
 
 	void loadImages() {
 		imgEnemy = iLoadImage("Assets\\game\\enemy_car.png");
+
+		// Load health bar images (e_hp_1.png, e_hp_2.png, e_hp_3.png)
+		for (int i = 1; i <= EnemyCar::MAX_HEALTH; i++) {
+			char path[128];
+			sprintf_s(path, "Assets\\hp\\e_hp_%d.png", i);
+			imgEnemyHP[i] = iLoadImage(path);
+		}
+
+		// Load explosion image
+		explosionImg = iLoadImage("Assets\\game\\explosion.png");
+	}
+
+	void addExplosion(float x, float y) {
+		// Find an inactive explosion slot
+		for (int i = 0; i < 5; i++) {
+			if (!explosions[i].active) {
+				explosions[i].active = true;
+				explosions[i].x = x;
+				explosions[i].y = y;
+				explosions[i].duration = 15;  // Show explosion for ~0.25 seconds (15 ticks at 60fps)
+				explosions[i].width = 120;    // Adjust based on your explosion image size
+				explosions[i].height = 120;
+				break;
+			}
+		}
+	}
+
+	void updateExplosions() {
+		for (int i = 0; i < 5; i++) {
+			if (explosions[i].active) {
+				explosions[i].duration--;
+				if (explosions[i].duration <= 0) {
+					explosions[i].active = false;
+				}
+			}
+		}
+	}
+
+	void drawExplosions() const {
+		for (int i = 0; i < 5; i++) {
+			if (explosions[i].active && explosionImg >= 0) {
+				// Center the explosion on the enemy position
+				int drawX = (int)(explosions[i].x - (explosions[i].width - ENEMY_W) / 2);
+				int drawY = (int)(explosions[i].y - (explosions[i].height - ENEMY_H) / 2);
+				iShowImage(drawX, drawY, explosions[i].width, explosions[i].height, explosionImg);
+			}
+		}
 	}
 
 	void reset() {
-		for (int i = 0; i < 3; i++) e[i].active = 0;
+		for (int i = 0; i < 3; i++) {
+			e[i].active = 0;
+			e[i].health = EnemyCar::MAX_HEALTH;
+		}
+		// Clear all explosions
+		for (int i = 0; i < 5; i++) {
+			explosions[i].active = false;
+		}
 		spawnCooldown = spawnMinTicks + (spawnRangeTicks ? (rand() % (spawnRangeTicks + 1)) : 0);
 	}
 
@@ -122,6 +209,36 @@ struct EnemySystem {
 		int c = 0;
 		for (int i = 0; i < 3; i++) if (e[i].active) c++;
 		return c;
+	}
+
+	// Function to reduce enemy health when hit by bat
+	void reduceHealth(int enemyIndex) {
+		if (enemyIndex < 0 || enemyIndex >= 3) return;
+		if (!e[enemyIndex].active) return;
+
+		e[enemyIndex].health--;
+		if (e[enemyIndex].health <= 0) {
+			// Add explosion at enemy position before destroying
+			addExplosion(e[enemyIndex].x, e[enemyIndex].y);
+			// Enemy destroyed
+			e[enemyIndex].active = 0;
+		}
+	}
+
+	// Check if bat hit any enemy (returns index of hit enemy, -1 if none)
+	int checkBatHit(float batX, float batY, float batW, float batH) {
+		for (int i = 0; i < 3; i++) {
+			if (!e[i].active) continue;
+
+			// Check collision between bat and enemy
+			if (batX < e[i].x + ENEMY_W &&
+				batX + batW > e[i].x &&
+				batY < e[i].y + ENEMY_H &&
+				batY + batH > e[i].y) {
+				return i;  // Return index of hit enemy
+			}
+		}
+		return -1;  // No hit
 	}
 
 	void spawnOne(float carX, float carY, float carW, float roadLeft, float roadRight) {
@@ -146,6 +263,9 @@ struct EnemySystem {
 		e[idx].attackX = 0.0f;
 
 		e[idx].hitCooldown = 0;
+
+		// Reset health when spawned (full health = 3)
+		e[idx].health = EnemyCar::MAX_HEALTH;
 
 		e[idx].y = carY - 260.0f;
 
@@ -176,6 +296,9 @@ struct EnemySystem {
 		) {
 		if (outPlayerHit) *outPlayerHit = 0;
 		if (!enabled) return carX;
+
+		// Update explosions animation
+		updateExplosions();
 
 		// spawn control
 		if (spawnCooldown > 0) spawnCooldown--;
@@ -280,7 +403,7 @@ struct EnemySystem {
 						e[i].hitCooldown = 45; // ~0.75s
 						if (outPlayerHit) *outPlayerHit = 1;
 					}
-					
+
 
 					// After contact moment, go back out (or end)
 					e[i].bumpDir = 1;
@@ -331,10 +454,27 @@ struct EnemySystem {
 
 	void draw() const {
 		if (!enabled) return;
+
 		for (int i = 0; i < 3; i++) {
 			if (!e[i].active) continue;
-			iShowImage((int)e[i].x, (int)e[i].y, 116, 169, imgEnemy);
+
+			// Draw enemy car
+			iShowImage((int)e[i].x, (int)e[i].y, ENEMY_W, ENEMY_H, imgEnemy);
+
+			// Draw health bar on top of enemy car (only if health > 0)
+			if (e[i].health > 0 && e[i].health <= EnemyCar::MAX_HEALTH && imgEnemyHP[e[i].health] >= 0) {
+				// Position health bar slightly above the enemy car
+				int hpX = (int)e[i].x;
+				int hpY = (int)e[i].y + ENEMY_H - 20;  // 20 pixels above the car
+				int hpW = 80;   // Width of health bar image (adjust based on your image)
+				int hpH = 12;   // Height of health bar image (adjust based on your image)
+
+				iShowImage(hpX + (ENEMY_W - hpW) / 2, hpY, hpW, hpH, imgEnemyHP[e[i].health]);
+			}
 		}
+
+		// Draw explosions after cars so they're visible on top
+		drawExplosions();
 	}
 };
 
