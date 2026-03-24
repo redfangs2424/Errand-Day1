@@ -4,8 +4,10 @@
 #include "Obstacle.hpp"
 #include "Nitro.hpp"
 #include "HealthSystem.hpp"
+#include "Score.hpp"
+#include "HighScore.hpp"
 #include <cstdlib>
-
+#include <cctype>
 
 int x, y;
 
@@ -51,9 +53,32 @@ int batFrame = 0;
 // ==============================
 int mouseX, mouseY;
 int menuBG;
+int scoreBG;
 static bool audioOpened = false;
 static bool gameOverSoundPlayed = false;
 static int enemyCollisionCooldown = 0;
+
+// DISTANCE TRACKING SYSTEM
+static double distanceTraveled = 0.0;  // Distance in km
+static int distanceTimerTicks = 0;      // Counter for 10-second intervals
+static const int TICKS_PER_10_SEC = 833; // 10 seconds at 12ms per tick
+
+// LEVEL COMPLETION SYSTEM
+static bool levelCompleted = false;
+static int levelCompleteTimer = 0;
+static const int LEVEL_COMPLETE_DURATION = 832; // 10 seconds
+static bool isLevelCompletion = false; // Track if we're coming from level completion
+static bool rageRequirementFailed = false; // Track if player failed rage requirement
+
+// Distance goals for each difficulty
+const double DISTANCE_GOAL_EASY = 10.0;
+const double DISTANCE_GOAL_MEDIUM = 15.0;
+const double DISTANCE_GOAL_HARD = 25.0;
+
+// Rage (Score) requirements for each difficulty
+const int RAGE_REQUIREMENT_EASY = 800;
+const int RAGE_REQUIREMENT_MEDIUM = 1000;
+const int RAGE_REQUIREMENT_HARD = 1200;
 
 struct MenuButtons {
 	Button start;
@@ -78,6 +103,16 @@ NitroSystem nitro;
 int carLaneX[4];
 
 EnemySystem enemy;
+// SCORE SYSTEM
+ScoreSystem score;
+
+//HIGH SCORE SYSTEM
+HighScoreSystem highScores;
+bool waitingForName = false;
+char playerName[50] = "";
+int nameInputIndex = 0;
+int finalScore = 0;
+int finalDifficulty = 0;
 
 // HEALTH + PAUSE
 HealthSystem health;
@@ -90,9 +125,9 @@ bool damageBlink = false;
 int blinkTicks = 0;
 
 // One-key "just pressed" tracking
-bool prevO = false;
-bool prevN = false;   // for edge-trigger
-bool prevB = false;   // For bat click edge-trigger tracking
+bool prevSpace = false;   // for bat swing (Space key)
+bool prevN = false;       // for nitro (N key)
+bool prevB = false;       // For bat click edge-trigger tracking (keep for mouse click)
 
 // ==============================
 //            STATE
@@ -100,11 +135,13 @@ bool prevB = false;   // For bat click edge-trigger tracking
 enum Page {
 	PAGE_HOME,
 	PAGE_START,
+	PAGE_HIGHSCORE,
 	PAGE_OPTIONS,
 	PAGE_CONTROLS,
 	PAGE_CREDITS,
 	PAGE_GAME,
-	PAGE_GAMEOVER
+	PAGE_GAMEOVER,
+	PAGE_LEVEL_COMPLETE
 };
 
 enum Difficulty {
@@ -142,6 +179,8 @@ void drawControls();
 void drawCredits();
 void drawGame();
 void drawGameOver();
+void drawHighScore();
+void drawLevelComplete();
 
 void initBackground();
 void initImages();
@@ -151,6 +190,7 @@ void initGame();
 void updateGame();
 void handleBatSwing();
 void updateBatAnimation();
+void goToGameOver();
 
 // Button handlers
 void startButtonClickHandler();
@@ -161,12 +201,104 @@ void creditsButtonClickHandler();
 void easyButtonClickHandler();
 void mediumButtonClickHandler();
 void hardButtonClickHandler();
+void highScoreButtonClickHandler();
 
 //  AUDIO forward declarations
 void initAudio();
 void playBackgroundMusic();
 void stopBackgroundMusic();
 void playGameOverMusicOnce();
+void playLevelCompleteSound();
+
+// Distance tracking functions
+void resetDistance() {
+	distanceTraveled = 0.0;
+	distanceTimerTicks = 0;
+}
+
+void updateDistance(bool nitroActive) {
+	distanceTimerTicks++;
+
+	// Check if 10 seconds have passed (approximately 833 ticks)
+	if (distanceTimerTicks >= TICKS_PER_10_SEC) {
+		// Add distance based on nitro status
+		if (nitroActive) {
+			distanceTraveled += 5.0;  // 5 km for nitro boost
+		}
+		else {
+			distanceTraveled += 1.0;  // 1 km for normal driving
+		}
+		distanceTimerTicks = 0;  // Reset counter
+	}
+}
+
+void drawDistance() {
+	char distText[50];
+	sprintf_s(distText, "Distance: %.1f km", distanceTraveled);
+	iSetColor(255, 255, 255);
+	iText(SCREEN_W - 640, SCREEN_H - 70, "Health", GLUT_BITMAP_HELVETICA_18);
+	iText(SCREEN_W - 680, SCREEN_H - 125, distText, GLUT_BITMAP_HELVETICA_18);
+}
+
+// Level completion functions
+double getDistanceGoal() {
+	switch (difficulty) {
+	case DIFF_EASY: return DISTANCE_GOAL_EASY;
+	case DIFF_MEDIUM: return DISTANCE_GOAL_MEDIUM;
+	case DIFF_HARD: return DISTANCE_GOAL_HARD;
+	default: return DISTANCE_GOAL_EASY;
+	}
+}
+
+int getRageRequirement() {
+	switch (difficulty) {
+	case DIFF_EASY: return RAGE_REQUIREMENT_EASY;
+	case DIFF_MEDIUM: return RAGE_REQUIREMENT_MEDIUM;
+	case DIFF_HARD: return RAGE_REQUIREMENT_HARD;
+	default: return RAGE_REQUIREMENT_EASY;
+	}
+}
+
+void checkLevelCompletion() {
+	if (levelCompleted) return;
+
+	double goal = getDistanceGoal();
+	int rageReq = getRageRequirement();
+	int currentScore = score.getScore();
+
+	if (distanceTraveled >= goal) {
+		// Check if score meets rage requirement
+		if (currentScore >= rageReq) {
+			// Level complete!
+			levelCompleted = true;
+			levelCompleteTimer = 0;
+			isLevelCompletion = true;
+			rageRequirementFailed = false;
+			page = PAGE_LEVEL_COMPLETE;
+
+			// Store final stats for level completion
+			finalScore = currentScore;
+			finalDifficulty = difficulty;
+
+			// Stop background music and play level complete sound
+			stopBackgroundMusic();
+			playLevelCompleteSound();
+		}
+		else {
+			// Failed rage requirement - game over with special message
+			rageRequirementFailed = true;
+			isLevelCompletion = false;
+			goToGameOver();
+		}
+	}
+}
+
+void resetLevelCompletion() {
+	levelCompleted = false;
+	levelCompleteTimer = 0;
+	isLevelCompletion = false;
+	rageRequirementFailed = false;
+}
 
 // ==============================
 //              UTILS
@@ -191,11 +323,13 @@ void iDraw()
 	switch (page) {
 	case PAGE_HOME:     drawHome();     break;
 	case PAGE_START:    drawStart();    break;
+	case PAGE_HIGHSCORE:    drawHighScore();    break;
 	case PAGE_OPTIONS:  drawOptions();  break;
 	case PAGE_CONTROLS: drawControls(); break;
 	case PAGE_CREDITS:  drawCredits();  break;
 	case PAGE_GAME:     drawGame();     break;
 	case PAGE_GAMEOVER: drawGameOver(); break;
+	case PAGE_LEVEL_COMPLETE: drawLevelComplete(); break;
 	}
 }
 
@@ -211,17 +345,25 @@ void iMouse(int button, int state, int mx, int my)
 {
 	if (button != GLUT_LEFT_BUTTON || state != GLUT_DOWN) return;
 
-	//printf("x: %d\t y: %d\n", mx, my);
+	printf("x: %d\t y: %d\n", mx, my);
 
 	if (page == PAGE_HOME) {
 		if (mx >= 316 && mx <= 602 && my >= 240 && my <= 321) {
 			startButtonClickHandler();
+		}
+		else if (mx >= 321 && mx <= 645 && my >= 165 && my <= 225) {
+			highScoreButtonClickHandler();
 		}
 		else if (mx >= 316 && mx <= 549 && my >= 68 && my <= 149) {
 			optionsButtonClickHandler();
 		}
 		else if (mx >= 553 && mx <= 634 && my >= 68 && my <= 149) {
 			exit(0);
+		}
+	}
+	else if (page == PAGE_HIGHSCORE) {
+		if (mx >= 64 && mx <= 144 && my >= SCREEN_H - 80 && my <= SCREEN_H) {
+			backButtonClickHandler();
 		}
 	}
 	else if (page == PAGE_START) {
@@ -260,16 +402,34 @@ void iMouse(int button, int state, int mx, int my)
 		}
 	}
 	else if (page == PAGE_GAME) {
-		// Left click swings bat in-game (disabled while paused)
 		if (!gamePaused) {
 			batPlaying = true;
 			batFrame = 0;
 		}
 	}
 	else if (page == PAGE_GAMEOVER) {
-		page = PAGE_HOME;
-		gameOverSoundPlayed = false;
-		playBackgroundMusic();
+		if (waitingForName) {
+			if (strlen(playerName) > 0) {
+				highScores.addScore(playerName, finalScore, finalDifficulty);
+			}
+			waitingForName = false;
+			page = PAGE_HOME;
+			gameOverSoundPlayed = false;
+			playBackgroundMusic();
+		}
+		else {
+			page = PAGE_HOME;
+			gameOverSoundPlayed = false;
+			playBackgroundMusic();
+		}
+	}
+	else if (page == PAGE_LEVEL_COMPLETE) {
+		waitingForName = true;
+		memset(playerName, 0, sizeof(playerName));
+		nameInputIndex = 0;
+		isLevelCompletion = true;
+		page = PAGE_GAMEOVER;
+		playBackgroundMusic(); // Restart music when leaving level complete
 	}
 }
 
@@ -284,6 +444,7 @@ void fixedUpdate()
 void initBackground()
 {
 	menuBG = iLoadImage("Assets\\global\\menu_background.png");
+	scoreBG = iLoadImage("Assets\\global\\menu_background.png");
 }
 
 void initImages()
@@ -411,13 +572,59 @@ void drawStart()
 	}
 }
 
+void drawHighScore()
+{
+	iSetColor(0, 0, 0);
+	iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
+	iShowImage(0, 0, SCREEN_W, SCREEN_H, scoreBG);
+	iShowImage(64, SCREEN_H - 80, 80, 80, btn.back.normal);
 
+	if (inside(mouseX, mouseY, 64, 144, SCREEN_H - 80, SCREEN_H)) {
+		iShowImage(64, SCREEN_H - 80, 80, 80, btn.back.hover);
+	}
+
+	highScores.draw(SCREEN_W, SCREEN_H);
+}
+
+void drawLevelComplete()
+{
+	iSetColor(0, 0, 0);
+	iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
+
+	iSetColor(255, 215, 0);
+	iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
+
+	iSetColor(0, 0, 0);
+	iText(SCREEN_W / 2 - 120, SCREEN_H / 2 + 100, "LEVEL COMPLETE!", GLUT_BITMAP_TIMES_ROMAN_24);
+
+	char diffText[50];
+	const char* diffName = (difficulty == DIFF_EASY) ? "Easy" : (difficulty == DIFF_MEDIUM) ? "Medium" : "Hard";
+	sprintf_s(diffText, "Difficulty: %s", diffName);
+	iText(SCREEN_W / 2 - 80, SCREEN_H / 2 + 50, diffText, GLUT_BITMAP_HELVETICA_18);
+
+	char distText[50];
+	sprintf_s(distText, "Distance: %.1f km", distanceTraveled);
+	iText(SCREEN_W / 2 - 80, SCREEN_H / 2, distText, GLUT_BITMAP_HELVETICA_18);
+
+	char scoreText[50];
+	sprintf_s(scoreText, "Score: %d", score.getScore());
+	iText(SCREEN_W / 2 - 60, SCREEN_H / 2 - 50, scoreText, GLUT_BITMAP_HELVETICA_18);
+
+	iSetColor(0, 0, 0);
+	iText(SCREEN_W / 2 - 150, SCREEN_H / 2 - 120, "Click anywhere to continue...", GLUT_BITMAP_HELVETICA_18);
+
+	int remainingSeconds = (LEVEL_COMPLETE_DURATION - levelCompleteTimer) / 83;
+	char timerText[50];
+	sprintf_s(timerText, "Auto-continue in: %d seconds", remainingSeconds);
+	iText(SCREEN_W / 2 - 120, SCREEN_H / 2 - 180, timerText, GLUT_BITMAP_HELVETICA_18);
+}
 
 void initAudio()
 {
 	if (audioOpened) return;
 	mciSendString("open \"Assets\\\\audio\\\\errand_day.mp3\" alias bgsong", NULL, 0, NULL);
 	mciSendString("open \"Assets\\\\audio\\\\game_over.mp3\" alias gosong", NULL, 0, NULL);
+	mciSendString("open \"Assets\\\\audio\\\\level_complete.wav\" alias lvlcomplete", NULL, 0, NULL);
 	audioOpened = true;
 }
 
@@ -445,6 +652,13 @@ void playGameOverMusicOnce()
 	mciSendString("play gosong from 0", NULL, 0, NULL);
 }
 
+void playLevelCompleteSound()
+{
+	if (!audioOpened) initAudio();
+	mciSendString("stop lvlcomplete", NULL, 0, NULL);
+	mciSendString("seek lvlcomplete to start", NULL, 0, NULL);
+	mciSendString("play lvlcomplete", NULL, 0, NULL);
+}
 
 void drawOptions()
 {
@@ -452,12 +666,10 @@ void drawOptions()
 	iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
 	iShowImage(0, 0, SCREEN_W, SCREEN_H, menuBG);
 
-	// BUTTONS
 	iShowImage(268, 240, 80, 80, btn.back.normal);
 	iShowImage(356, 240, 275, 80, btn.controls.normal);
 	iShowImage(356, 152, 274, 80, btn.credits.normal);
 
-	// BUTTON_HOVERS
 	if (inside(mouseX, mouseY, 268, 348, 240, 320)) {
 		iShowImage(268, 240, 80, 80, btn.back.hover);
 	}
@@ -505,6 +717,7 @@ void backButtonClickHandler()    { page = PAGE_HOME; }
 void optionsButtonClickHandler() { page = PAGE_OPTIONS; }
 void controlsButtonClickHandler(){ page = PAGE_CONTROLS; }
 void creditsButtonClickHandler() { page = PAGE_CREDITS; }
+void highScoreButtonClickHandler() { page = PAGE_HIGHSCORE; }
 
 void easyButtonClickHandler()
 {
@@ -534,8 +747,6 @@ void setDifficulty(Difficulty d)
 {
 	difficulty = d;
 
-
-	// You can tune these numbers freely.
 	if (difficulty == DIFF_EASY) {
 		cfg.maxSpeed = 16.0;
 		cfg.accelRate = 0.13;
@@ -552,9 +763,9 @@ void setDifficulty(Difficulty d)
 		cfg.obstacles.baseDelayNoObs = 185;  cfg.obstacles.rangeDelayNoObs = 300;
 		cfg.obstacles.baseDelayWithObs = 260; cfg.obstacles.rangeDelayWithObs = 340;
 
-		enemy.maxEnemy = 2;
-		enemy.spawnMinTicks = 99999;
-		enemy.spawnRangeTicks = 0;
+		enemy.maxEnemy = 3;
+		enemy.spawnMinTicks = 580;
+		enemy.spawnRangeTicks = 280;
 	}
 	else if (difficulty == DIFF_MEDIUM) {
 		cfg.maxSpeed = 18.0;
@@ -576,7 +787,7 @@ void setDifficulty(Difficulty d)
 		enemy.spawnMinTicks = 520;
 		enemy.spawnRangeTicks = 320;
 	}
-	else { // DIFF_HARD
+	else {
 		cfg.maxSpeed = 20.0;
 		cfg.accelRate = 0.17;
 		cfg.brakeRate = 0.38;
@@ -597,10 +808,7 @@ void setDifficulty(Difficulty d)
 		enemy.spawnRangeTicks = 280;
 	}
 
-	// Push obstacle config into obstacle system
 	setObstacleSpawnConfig(cfg.obstacles);
-
-	// Nitro Allowance Levels
 	nitro.setAllowed(difficulty != DIFF_EASY);
 }
 
@@ -611,9 +819,15 @@ void goToGameOver()
 		playGameOverMusicOnce();
 		gameOverSoundPlayed = true;
 	}
+	finalScore = score.getScore();
+	finalDifficulty = difficulty;
+
+	waitingForName = true;
+	memset(playerName, 0, sizeof(playerName));
+	nameInputIndex = 0;
 }
 
-// LANE 
+// LANE
 void initLanes()
 {
 	double usable = (ROAD_RIGHT_X - ROAD_LEFT_X - CAR_W);
@@ -634,7 +848,8 @@ void initGame()
 
 	initLanes();
 
-	prevO = false;
+	prevSpace = false;
+	prevN = false;
 	prevB = false;
 
 	initObstacleSystem(ROAD_LEFT_X, ROAD_RIGHT_X, SCREEN_H);
@@ -650,24 +865,26 @@ void initGame()
 	nitro.reset();
 	enemy.reset();
 	health.reset();
+	score.reset();
+	resetDistance();
+	resetLevelCompletion();
 	gamePaused = false;
 	prevP = false;
+	rageRequirementFailed = false;
 }
 
 void drawGame()
 {
-	bool brakeHeld = isKeyPressed('s') || isSpecialKeyPressed(GLUT_KEY_DOWN);
+	bool brakeHeld = (isKeyPressed('s') != 0) || (isSpecialKeyPressed(GLUT_KEY_DOWN) != 0);
 
 	bool drawCarNow = true;
 	if (damageBlink) {
 		drawCarNow = ((blinkTicks / 6) % 2 == 0);
 	}
 
-	// INFINITE ROAD DRAW
 	iShowImage(0, (int)roadOffsetY, SCREEN_W, SCREEN_H, roadImgA);
 	iShowImage(0, (int)roadOffsetY + SCREEN_H, SCREEN_W, SCREEN_H, roadImgB);
 
-	// CAR DRAW
 	if (drawCarNow) {
 		if (nitro.isActive()) {
 			iShowImage((int)carX, CAR_Y + nitro.carDrawYOffset(), CAR_W, 204, nitro.carNitroImg);
@@ -685,26 +902,62 @@ void drawGame()
 		}
 	}
 
-	// Draw enemies (this now includes explosion drawing)
 	enemy.draw();
 
-	// OBSTACLES DRAW
 	for (int i = 0; i < OB_CAPACITY; i++) {
 		if (!gObs[i].active) continue;
-
 		iShowImage((int)gObs[i].x, (int)gObs[i].y,
 			gObs[i].width, gObs[i].height,
 			obsImg[gObs[i].imgIndex]);
 	}
 
-	// NITRO DRAW
 	nitro.drawPickups();
 	nitro.drawMeter();
 
-	// HEALTH HUD
 	health.draw(SCREEN_W, SCREEN_H);
+	score.draw(SCREEN_W, SCREEN_H);
+	drawDistance();
 
-	// PAUSE OVERLAY
+	char goalText[50];
+	double goal = getDistanceGoal();
+	sprintf_s(goalText, "Goal: %.0f km", goal);
+	iSetColor(255, 255, 0);
+	iText(SCREEN_W - 680, SCREEN_H - 150, goalText, GLUT_BITMAP_HELVETICA_18);
+
+	// Draw rage requirement
+	// Draw rage requirement - show rage left
+	// Draw rage requirement - show rage left
+	int rageReq = getRageRequirement();
+	int currentScore = score.getScore();
+	int rageLeft = rageReq - currentScore;
+	if (rageLeft < 0) rageLeft = 0; // Ensure it doesn't go negative
+
+	char rageText[50];
+	sprintf_s(rageText, "Rage left: %d", rageLeft);
+	iSetColor(255, 200, 0);
+	iText(SCREEN_W - 680, SCREEN_H - 175, rageText, GLUT_BITMAP_HELVETICA_18);
+
+	// Draw rage bar - shows remaining rage (drains as you score)
+	int barWidth = 200;
+	int barHeight = 8;
+	int barX = SCREEN_W - 680;
+	int barY = SCREEN_H - 190;
+
+	// Calculate progress based on RAGE LEFT / TOTAL RAGE
+	// So when rage left is high, bar is FULL
+	// When rage left is low, bar is EMPTY
+	double progress = (double)rageLeft / (double)rageReq;
+	if (progress > 1.0) progress = 1.0;
+	if (progress < 0.0) progress = 0.0;
+
+	// Background bar (dark gray)
+	iSetColor(80, 80, 80);
+	iFilledRectangle(barX, barY, barWidth, barHeight);
+
+	// Foreground bar (orange showing remaining rage)
+	iSetColor(255, 100, 0);
+	iFilledRectangle(barX, barY, (int)(barWidth * progress), barHeight);
+
 	if (gamePaused) {
 		iSetColor(0, 0, 0);
 		iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
@@ -713,7 +966,6 @@ void drawGame()
 		iText(SCREEN_W / 2 - 150, SCREEN_H / 2 - 10, "Press Esc to Resume, Q to Quit", GLUT_BITMAP_HELVETICA_18);
 	}
 
-	// REAL-TIME DEBUG
 	iSetColor(255, 255, 255);
 	char txt[160];
 	const char* diffName = (difficulty == DIFF_EASY) ? "Easy" : (difficulty == DIFF_MEDIUM) ? "Medium" : "Hard";
@@ -721,44 +973,38 @@ void drawGame()
 	iText(10, SCREEN_H - 25, txt, GLUT_BITMAP_HELVETICA_18);
 }
 
-// UPDATED: Function to handle bat swing collision with enemies with increased range
 void handleBatSwing() {
 	if (!batPlaying) return;
 
-	// Get bat position with configurable offsets for better reach
 	int batX = (int)carX + BAT_OFFSET_X + BAT_HITBOX_OFFSET_X;
 	int batY = CAR_Y + BAT_OFFSET_Y;
-
-	// Create larger hitbox for better reach (INCREASED RANGE)
 	int batW = CAR_W + BAT_EXTRA_W + BAT_HITBOX_EXTRA_W;
 	int batH = CAR_H + BAT_HITBOX_EXTRA_H;
 
-	// Check if bat hit any enemy (only once per swing)
 	static bool hitProcessed = false;
 
 	if (batFrame == 0) {
-		hitProcessed = false;  // Reset when swing starts
+		hitProcessed = false;
 	}
 
-	if (!hitProcessed && batFrame >= 3 && batFrame <= 7) {  // Check collision during mid-swing
+	if (!hitProcessed && batFrame >= 3 && batFrame <= 7) {
 		int hitIndex = enemy.checkBatHit(batX, batY, batW, batH);
 		if (hitIndex >= 0) {
 			enemy.reduceHealth(hitIndex);
+			if (enemy.e[hitIndex].active && enemy.e[hitIndex].health > 0) {
+				score.addPoints(50);
+			}
 			hitProcessed = true;
 
-			// Add knockback to push enemies away after hit for safer distance
 			if (hitIndex >= 0 && hitIndex < 3 && enemy.e[hitIndex].active) {
-				// Determine push direction based on relative position
 				float pushDir = (enemy.e[hitIndex].x < carX) ? -BAT_KNOCKBACK_FORCE : BAT_KNOCKBACK_FORCE;
 				enemy.e[hitIndex].x += pushDir;
 
-				// Clamp to road boundaries
 				if (enemy.e[hitIndex].x < ROAD_LEFT_X)
 					enemy.e[hitIndex].x = (float)ROAD_LEFT_X;
 				if (enemy.e[hitIndex].x > ROAD_RIGHT_X - EnemySystem::ENEMY_W)
 					enemy.e[hitIndex].x = (float)(ROAD_RIGHT_X - EnemySystem::ENEMY_W);
 
-				// Also push the enemy slightly back (negative Y direction) to create more distance
 				enemy.e[hitIndex].y -= 15.0f;
 				if (enemy.e[hitIndex].y < CAR_Y - 100) {
 					enemy.e[hitIndex].y = (float)(CAR_Y - 100);
@@ -771,9 +1017,84 @@ void handleBatSwing() {
 // GAME REFRESH
 void updateGame()
 {
+	// ========== IMPROVED NAME INPUT HANDLING ==========
+	if (page == PAGE_GAMEOVER && waitingForName) {
+		// Handle ENTER key to save name
+		if (isKeyPressed(13) != 0) {
+			if (strlen(playerName) > 0) {
+				highScores.addScore(playerName, finalScore, finalDifficulty);
+			}
+			waitingForName = false;
+			page = PAGE_HOME;
+			gameOverSoundPlayed = false;
+			playBackgroundMusic();
+			return;
+		}
 
-	// ---- Pause toggle (edge-triggered) ----
-	bool nowEsc = (isKeyPressed(27) != 0);   // 27 = ESC
+		// Handle ESC key to skip
+		if (isKeyPressed(27) != 0) {
+			waitingForName = false;
+			page = PAGE_HOME;
+			gameOverSoundPlayed = false;
+			playBackgroundMusic();
+			return;
+		}
+
+		// Handle BACKSPACE
+		static bool prevBackspace = false;
+		bool nowBackspace = (isKeyPressed(8) != 0);
+		if (nowBackspace && !prevBackspace && nameInputIndex > 0) {
+			nameInputIndex--;
+			playerName[nameInputIndex] = '\0';
+		}
+		prevBackspace = nowBackspace;
+
+		// Track which keys are currently pressed to avoid duplicates
+		static bool keyProcessed[256] = { false };
+
+		// Process each possible character
+		for (int key = 32; key <= 126; key++) { // Printable ASCII range
+			if (isKeyPressed(key) != 0) {
+				if (!keyProcessed[key] && nameInputIndex < 49) {
+					// Valid characters: letters, numbers, space, underscore
+					if ((key >= 'A' && key <= 'Z') ||
+						(key >= 'a' && key <= 'z') ||
+						(key >= '0' && key <= '9') ||
+						key == ' ' || key == '_') {
+
+						playerName[nameInputIndex] = (char)key;
+						nameInputIndex++;
+						playerName[nameInputIndex] = '\0';
+					}
+					keyProcessed[key] = true;
+				}
+			}
+			else {
+				keyProcessed[key] = false;
+			}
+		}
+
+		return;
+	}
+
+	// ========== LEVEL COMPLETE PAGE HANDLING ==========
+	if (page == PAGE_LEVEL_COMPLETE) {
+		levelCompleteTimer++;
+
+		if (levelCompleteTimer >= LEVEL_COMPLETE_DURATION) {
+			waitingForName = true;
+			memset(playerName, 0, sizeof(playerName));
+			nameInputIndex = 0;
+			isLevelCompletion = true;
+			page = PAGE_GAMEOVER;
+			playBackgroundMusic(); // Restart music when leaving level complete
+			return;
+		}
+		return;
+	}
+
+	// ========== REGULAR GAME LOGIC ==========
+	bool nowEsc = (isKeyPressed(27) != 0);
 
 	if (nowEsc && !prevP) {
 		gamePaused = !gamePaused;
@@ -781,20 +1102,16 @@ void updateGame()
 	prevP = nowEsc;
 
 	if (gamePaused) {
-		// Quit to home while paused (optional but requested)
-		if (isKeyPressed('q') || isKeyPressed('Q')) {
+		if ((isKeyPressed('q') != 0) || (isKeyPressed('Q') != 0)) {
 			page = PAGE_HOME;
 			gameOverSoundPlayed = false;
 			playBackgroundMusic();
 		}
-		return; // stop updating world
+		return;
 	}
 
 	setObstacleSpawnEnabled(!nitro.isActive());
-
 	bool nitroOn = nitro.isActive();
-
-
 
 	carX = enemy.update(
 		(float)roadSpeed,
@@ -802,7 +1119,7 @@ void updateGame()
 		nitroOn,
 		(float)ROAD_LEFT_X, (float)ROAD_RIGHT_X
 		);
-	// Ensure enemy cars stay within road boundaries
+
 	for (int i = 0; i < 3; i++) {
 		if (enemy.e[i].active) {
 			if (enemy.e[i].x < ROAD_LEFT_X) enemy.e[i].x = ROAD_LEFT_X;
@@ -812,26 +1129,29 @@ void updateGame()
 	}
 
 	if (page != PAGE_GAME) {
-		prevO = false; // don't carry key state across menus
+		prevSpace = false;
+		prevN = false;
 		return;
 	}
 
-	// O key triggers bat swing once (edge-triggered)
-	bool nowO = (isKeyPressed('o') != 0);
-	if (nowO && !prevO) {
+	// SPACE key triggers bat swing (edge-triggered)
+	bool nowSpace = (isKeyPressed(' ') != 0);
+	if (nowSpace && !prevSpace) {
 		batPlaying = true;
 		batFrame = 0;
 	}
-	prevO = nowO;
+	prevSpace = nowSpace;
 
 	// N key triggers nitro
-	bool nowN = (isKeyPressed('n') || isKeyPressed('N')) != 0;
-	if (nowN && !prevN) nitro.tryActivate();
+	bool nowN = (isKeyPressed('n') != 0) || (isKeyPressed('N') != 0);
+	if (nowN && !prevN) {
+		nitro.tryActivate();
+	}
 	prevN = nowN;
 
 	// Steering depends on speed
-	bool leftHeld = isKeyPressed('a') || isSpecialKeyPressed(GLUT_KEY_LEFT);
-	bool rightHeld = isKeyPressed('d') || isSpecialKeyPressed(GLUT_KEY_RIGHT);
+	bool leftHeld = (isKeyPressed('a') != 0) || (isSpecialKeyPressed(GLUT_KEY_LEFT) != 0);
+	bool rightHeld = (isKeyPressed('d') != 0) || (isSpecialKeyPressed(GLUT_KEY_RIGHT) != 0);
 
 	double t = (roadSpeed - MIN_SPEED) / (cfg.maxSpeed - MIN_SPEED);
 	t = clampDouble(t, 0.0, 1.0);
@@ -840,9 +1160,8 @@ void updateGame()
 	if (leftHeld)  carX -= steerThisFrame;
 	if (rightHeld) carX += steerThisFrame;
 
-	// Speed control
-	bool accelerateHeld = isKeyPressed('w') || isSpecialKeyPressed(GLUT_KEY_UP);
-	bool brakeHeld = isKeyPressed('s') || isSpecialKeyPressed(GLUT_KEY_DOWN);
+	bool accelerateHeld = (isKeyPressed('w') != 0) || (isSpecialKeyPressed(GLUT_KEY_UP) != 0);
+	bool brakeHeld = (isKeyPressed('s') != 0) || (isSpecialKeyPressed(GLUT_KEY_DOWN) != 0);
 
 	if (accelerateHeld) {
 		roadSpeed += cfg.accelRate;
@@ -860,14 +1179,10 @@ void updateGame()
 		if (roadSpeed < MIN_SPEED) roadSpeed = MIN_SPEED;
 	}
 
-	// Road scroll
 	roadOffsetY -= roadSpeed;
-
-	// endless
 	if (roadOffsetY <= -SCREEN_H)
 		roadOffsetY += SCREEN_H;
 
-	// Clamp to road
 	carX = clampDouble(carX, ROAD_LEFT_X, ROAD_RIGHT_X - CAR_W);
 
 	float drawCarY = (float)CAR_Y + (float)nitro.carDrawYOffset();
@@ -881,35 +1196,31 @@ void updateGame()
 		roadSpeed
 		);
 
+	updateDistance(nitro.isActive());
+	checkLevelCompletion();
 
-
-	// Obstacles
+	if (levelCompleted) {
+		return;
+	}
 
 	updateObstacles((float)roadSpeed);
 
-	// Collision -> blink + reset obstacles + speed penalty
 	if (!damageBlink && checkObstacleCollision((float)carX, (float)CAR_Y, (float)CAR_W, (float)CAR_H)) {
 		damageBlink = true;
 		blinkTicks = cfg.damageBlinkTicks;
-
-
-		// Reduce health
 		health.takeHit();
 
-		// Check game over
 		if (health.isGameOver()) {
 			goToGameOver();
 			return;
 		}
 
 		resetObstacles();
-
 		roadSpeed = cfg.crashSpeedReset;
 		if (roadSpeed < MIN_SPEED) roadSpeed = MIN_SPEED;
 		if (roadSpeed > cfg.maxSpeed) roadSpeed = cfg.maxSpeed;
 	}
 
-	// Enemy car collision
 	if (!damageBlink && enemyCollisionCooldown == 0) {
 		for (int i = 0; i < 3; i++) {
 			if (enemy.e[i].active) {
@@ -928,12 +1239,10 @@ void updateGame()
 					}
 
 					resetObstacles();
-
 					roadSpeed = cfg.crashSpeedReset;
 					if (roadSpeed < MIN_SPEED) roadSpeed = MIN_SPEED;
 					if (roadSpeed > cfg.maxSpeed) roadSpeed = cfg.maxSpeed;
 
-					// Push enemy car away and clamp to road
 					int pushDir = (carX < enemy.e[i].x) ? -1 : 1;
 					enemy.e[i].x += pushDir * 15.0f;
 					if (enemy.e[i].x < ROAD_LEFT_X) enemy.e[i].x = ROAD_LEFT_X;
@@ -947,7 +1256,6 @@ void updateGame()
 		}
 	}
 
-	// Damage blink tick-down
 	if (damageBlink) {
 		blinkTicks--;
 		if (blinkTicks <= 0) {
@@ -956,20 +1264,18 @@ void updateGame()
 		}
 	}
 
-	// Enemy collision cooldown tick-down
 	if (enemyCollisionCooldown > 0) {
 		enemyCollisionCooldown--;
 	}
 
-	// Bat animation and collision handling
 	updateBatAnimation();
-	handleBatSwing();  // Check bat collision with enemies with increased range
+	handleBatSwing();
 }
 
 void updateBatAnimation()
 {
 	static int batDelayCounter = 0;
-	const int batFrameDelay = 2;   // bigger = slower animation
+	const int batFrameDelay = 2;
 
 	if (!batPlaying) return;
 
@@ -987,15 +1293,63 @@ void updateBatAnimation()
 	}
 }
 
-
 void drawGameOver()
 {
 	iSetColor(0, 0, 0);
 	iFilledRectangle(0, 0, SCREEN_W, SCREEN_H);
 
-	iSetColor(255, 255, 255);
-	iText(SCREEN_W / 2 - 70, SCREEN_H / 2 + 30, "GAME OVER", GLUT_BITMAP_HELVETICA_18);
-	iText(SCREEN_W / 2 - 170, SCREEN_H / 2, "Click to return to Home", GLUT_BITMAP_HELVETICA_18);
+	if (waitingForName) {
+		iSetColor(255, 255, 255);
+
+		if (rageRequirementFailed) {
+			iText(SCREEN_W / 2 - 120, SCREEN_H / 2 + 80, "You still have rage left!", GLUT_BITMAP_HELVETICA_18);
+		}
+		else if (!isLevelCompletion) {
+			iText(SCREEN_W / 2 - 100, SCREEN_H / 2 + 80, "GAME OVER!", GLUT_BITMAP_HELVETICA_18);
+		}
+		else {
+			iText(SCREEN_W / 2 - 100, SCREEN_H / 2 + 80, "LEVEL COMPLETED!", GLUT_BITMAP_HELVETICA_18);
+		}
+
+		char scoreText[100];
+		sprintf_s(scoreText, "Your Score: %d", finalScore);
+		iText(SCREEN_W / 2 - 100, SCREEN_H / 2 + 40, scoreText, GLUT_BITMAP_HELVETICA_18);
+
+		char distText[100];
+		sprintf_s(distText, "Distance: %.1f km", distanceTraveled);
+		iText(SCREEN_W / 2 - 100, SCREEN_H / 2 + 20, distText, GLUT_BITMAP_HELVETICA_18);
+
+		iText(SCREEN_W / 2 - 100, SCREEN_H / 2, "Enter your name:", GLUT_BITMAP_HELVETICA_18);
+
+		char nameDisplay[60];
+		sprintf_s(nameDisplay, "> %s_", playerName);
+		iText(SCREEN_W / 2 - 100, SCREEN_H / 2 - 40, nameDisplay, GLUT_BITMAP_HELVETICA_18);
+
+		iText(SCREEN_W / 2 - 150, SCREEN_H / 2 - 100, "Press ENTER to save, ESC to skip", GLUT_BITMAP_HELVETICA_18);
+	}
+	else {
+		iSetColor(255, 255, 255);
+
+		if (rageRequirementFailed) {
+			iText(SCREEN_W / 2 - 120, SCREEN_H / 2 + 30, "You still have rage left!", GLUT_BITMAP_HELVETICA_18);
+		}
+		else if (!isLevelCompletion) {
+			iText(SCREEN_W / 2 - 70, SCREEN_H / 2 + 30, "GAME OVER", GLUT_BITMAP_HELVETICA_18);
+		}
+		else {
+			iText(SCREEN_W / 2 - 100, SCREEN_H / 2 + 30, "LEVEL COMPLETED!", GLUT_BITMAP_HELVETICA_18);
+		}
+
+		char scoreText[50];
+		sprintf_s(scoreText, "Score: %d", finalScore);
+		iText(SCREEN_W / 2 - 50, SCREEN_H / 2, scoreText, GLUT_BITMAP_HELVETICA_18);
+
+		char distText[50];
+		sprintf_s(distText, "Distance: %.1f km", distanceTraveled);
+		iText(SCREEN_W / 2 - 50, SCREEN_H / 2 - 25, distText, GLUT_BITMAP_HELVETICA_18);
+
+		iText(SCREEN_W / 2 - 170, SCREEN_H / 2 - 50, "Click to return to Home", GLUT_BITMAP_HELVETICA_18);
+	}
 }
 
 // ==============================
@@ -1013,10 +1367,8 @@ int main()
 	initAudio();
 	playBackgroundMusic();
 
-	// Default difficulty (also pushes obstacle config)
 	setDifficulty(DIFF_EASY);
 
-	// Update timer
 	iSetTimer(12, updateGame);
 
 	iStart();
