@@ -324,7 +324,6 @@ void iDraw()
 	case PAGE_HOME:     drawHome();     break;
 	case PAGE_START:    drawStart();    break;
 	case PAGE_HIGHSCORE:    drawHighScore();    break;
-	case PAGE_OPTIONS:  drawOptions();  break;
 	case PAGE_CONTROLS: drawControls(); break;
 	case PAGE_CREDITS:  drawCredits();  break;
 	case PAGE_GAME:     drawGame();     break;
@@ -345,7 +344,7 @@ void iMouse(int button, int state, int mx, int my)
 {
 	if (button != GLUT_LEFT_BUTTON || state != GLUT_DOWN) return;
 
-	printf("x: %d\t y: %d\n", mx, my);
+	//printf("x: %d\t y: %d\n", mx, my);
 
 	if (page == PAGE_HOME) {
 		if (mx >= 316 && mx <= 602 && my >= 240 && my <= 321) {
@@ -718,7 +717,6 @@ void optionsButtonClickHandler() { page = PAGE_OPTIONS; }
 void controlsButtonClickHandler(){ page = PAGE_CONTROLS; }
 void creditsButtonClickHandler() { page = PAGE_CREDITS; }
 void highScoreButtonClickHandler() { page = PAGE_HIGHSCORE; }
-
 void easyButtonClickHandler()
 {
 	setDifficulty(DIFF_EASY);
@@ -1076,7 +1074,6 @@ void updateGame()
 
 		return;
 	}
-
 	// ========== LEVEL COMPLETE PAGE HANDLING ==========
 	if (page == PAGE_LEVEL_COMPLETE) {
 		levelCompleteTimer++;
