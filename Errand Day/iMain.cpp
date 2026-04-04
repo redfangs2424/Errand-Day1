@@ -47,6 +47,18 @@ const float BAT_KNOCKBACK_FORCE = 35.0f; // Knockback force when hitting enemies
 bool batPlaying = false;
 int batFrame = 0;
 
+// ==============================
+//     HEALTH PICKUP SYSTEM
+// ==============================
+struct HealthPickup {
+	float x, y;          // Position on road
+	bool active;         // Whether it exists
+	int lifetime;        // Timer for disappearance (4 seconds = 333 ticks at 12ms)
+};
+
+const int MAX_HEALTH_PICKUPS = 10;
+HealthPickup healthPickups[MAX_HEALTH_PICKUPS];
+int healthPickupImg = -1;  // Image for health pickup
 
 // ==============================
 //         MENU / RESOURCES
@@ -70,15 +82,18 @@ static const int LEVEL_COMPLETE_DURATION = 832; // 10 seconds
 static bool isLevelCompletion = false; // Track if we're coming from level completion
 static bool rageRequirementFailed = false; // Track if player failed rage requirement
 
+// Boss system variables
+static int gameTickCounter = 0;  // Counter for boss system timing
+
 // Distance goals for each difficulty
-const double DISTANCE_GOAL_EASY = 10.0;
-const double DISTANCE_GOAL_MEDIUM = 15.0;
-const double DISTANCE_GOAL_HARD = 25.0;
+const double DISTANCE_GOAL_EASY = 15.0;
+const double DISTANCE_GOAL_MEDIUM = 20.0;
+const double DISTANCE_GOAL_HARD = 18.0;
 
 // Rage (Score) requirements for each difficulty
-const int RAGE_REQUIREMENT_EASY = 800;
-const int RAGE_REQUIREMENT_MEDIUM = 1000;
-const int RAGE_REQUIREMENT_HARD = 1200;
+const int RAGE_REQUIREMENT_EASY = 1000;
+const int RAGE_REQUIREMENT_MEDIUM = 1500;
+const int RAGE_REQUIREMENT_HARD = 2000;
 
 struct MenuButtons {
 	Button start;
@@ -192,6 +207,13 @@ void handleBatSwing();
 void updateBatAnimation();
 void goToGameOver();
 
+// Health pickup functions
+void initHealthPickups();
+void spawnHealthPickup(float x, float y);
+void updateHealthPickups(float roadSpeed);
+void drawHealthPickups();
+void checkHealthPickupCollision();
+
 // Button handlers
 void startButtonClickHandler();
 void backButtonClickHandler();
@@ -209,6 +231,7 @@ void playBackgroundMusic();
 void stopBackgroundMusic();
 void playGameOverMusicOnce();
 void playLevelCompleteSound();
+void playCarDamageSound();  // Add this line
 
 // Distance tracking functions
 void resetDistance() {
@@ -217,18 +240,20 @@ void resetDistance() {
 }
 
 void updateDistance(bool nitroActive) {
-	distanceTimerTicks++;
+	// Add distance every frame based on current nitro status
+	// Normal: 1 km per 10 seconds = 0.0012 km per tick (12ms per tick)
+	// Nitro: 5 km per 10 seconds = 0.006 km per tick
+	if (nitroActive) {
+		distanceTraveled += 0.006;  // 5 km per 10 seconds when nitro active
+	}
+	else {
+		distanceTraveled += 0.0012; // 1 km per 10 seconds when normal
+	}
 
-	// Check if 10 seconds have passed (approximately 833 ticks)
+	// Optional: Keep timer for reference
+	distanceTimerTicks++;
 	if (distanceTimerTicks >= TICKS_PER_10_SEC) {
-		// Add distance based on nitro status
-		if (nitroActive) {
-			distanceTraveled += 5.0;  // 5 km for nitro boost
-		}
-		else {
-			distanceTraveled += 1.0;  // 1 km for normal driving
-		}
-		distanceTimerTicks = 0;  // Reset counter
+		distanceTimerTicks = 0;
 	}
 }
 
@@ -324,6 +349,7 @@ void iDraw()
 	case PAGE_HOME:     drawHome();     break;
 	case PAGE_START:    drawStart();    break;
 	case PAGE_HIGHSCORE:    drawHighScore();    break;
+	case PAGE_OPTIONS:  drawOptions();  break;
 	case PAGE_CONTROLS: drawControls(); break;
 	case PAGE_CREDITS:  drawCredits();  break;
 	case PAGE_GAME:     drawGame();     break;
@@ -344,7 +370,7 @@ void iMouse(int button, int state, int mx, int my)
 {
 	if (button != GLUT_LEFT_BUTTON || state != GLUT_DOWN) return;
 
-	//printf("x: %d\t y: %d\n", mx, my);
+	printf("x: %d\t y: %d\n", mx, my);
 
 	if (page == PAGE_HOME) {
 		if (mx >= 316 && mx <= 602 && my >= 240 && my <= 321) {
@@ -511,6 +537,84 @@ void initImages()
 	enemy.loadImages();
 
 	health.loadImages();
+
+	// Health pickup image
+	healthPickupImg = iLoadImage("Assets\\hp\\addHealth.png");
+}
+
+// ==============================
+//        HEALTH PICKUP FUNCTIONS
+// ==============================
+void initHealthPickups() {
+	for (int i = 0; i < MAX_HEALTH_PICKUPS; i++) {
+		healthPickups[i].active = false;
+		healthPickups[i].lifetime = 0;
+	}
+}
+
+void spawnHealthPickup(float x, float y) {
+	// Find an inactive pickup slot
+	for (int i = 0; i < MAX_HEALTH_PICKUPS; i++) {
+		if (!healthPickups[i].active) {
+			healthPickups[i].x = x;
+			healthPickups[i].y = y;
+			healthPickups[i].active = true;
+			healthPickups[i].lifetime = 333; // 4 seconds at 12ms per tick (4000/12 ≈ 333)
+			return;
+		}
+	}
+}
+
+void updateHealthPickups(float roadSpeed) {
+	for (int i = 0; i < MAX_HEALTH_PICKUPS; i++) {
+		if (healthPickups[i].active) {
+			// Move pickup upward with road scrolling
+			healthPickups[i].y -= roadSpeed;
+
+			// Decrease lifetime
+			healthPickups[i].lifetime--;
+
+			// Remove if off screen or lifetime expired
+			if (healthPickups[i].y + 50 < 0 || healthPickups[i].lifetime <= 0) {
+				healthPickups[i].active = false;
+			}
+		}
+	}
+}
+
+void drawHealthPickups() {
+	for (int i = 0; i < MAX_HEALTH_PICKUPS; i++) {
+		if (healthPickups[i].active && healthPickupImg != -1) {
+			iShowImage((int)healthPickups[i].x, (int)healthPickups[i].y, 40, 40, healthPickupImg);
+		}
+	}
+}
+
+void checkHealthPickupCollision() {
+	float carLeft = (float)carX;
+	float carRight = (float)carX + CAR_W;
+	float carTop = CAR_Y;
+	float carBottom = CAR_Y + CAR_H;
+
+	for (int i = 0; i < MAX_HEALTH_PICKUPS; i++) {
+		if (healthPickups[i].active) {
+			float pickupLeft = healthPickups[i].x;
+			float pickupRight = healthPickups[i].x + 40;
+			float pickupTop = healthPickups[i].y;
+			float pickupBottom = healthPickups[i].y + 40;
+
+			// Check collision
+			if (carRight > pickupLeft && carLeft < pickupRight &&
+				carBottom > pickupTop && carTop < pickupBottom) {
+
+				// Collect health pickup
+				healthPickups[i].active = false;
+
+				// Restore 1 health (if not already at max)
+				health.increaseHealth();
+			}
+		}
+	}
 }
 
 // ==============================
@@ -624,6 +728,12 @@ void initAudio()
 	mciSendString("open \"Assets\\\\audio\\\\errand_day.mp3\" alias bgsong", NULL, 0, NULL);
 	mciSendString("open \"Assets\\\\audio\\\\game_over.mp3\" alias gosong", NULL, 0, NULL);
 	mciSendString("open \"Assets\\\\audio\\\\level_complete.wav\" alias lvlcomplete", NULL, 0, NULL);
+
+	// Add new sound effects
+	mciSendString("open \"Assets\\\\audio\\\\anas_laugh.mp3\" alias anas_laugh", NULL, 0, NULL);
+	mciSendString("open \"Assets\\\\audio\\\\enemy_destroyed.mp3\" alias enemy_destroyed", NULL, 0, NULL);
+	mciSendString("open \"Assets\\\\audio\\\\car_damage.mp3\" alias car_damage", NULL, 0, NULL);
+
 	audioOpened = true;
 }
 
@@ -657,6 +767,17 @@ void playLevelCompleteSound()
 	mciSendString("stop lvlcomplete", NULL, 0, NULL);
 	mciSendString("seek lvlcomplete to start", NULL, 0, NULL);
 	mciSendString("play lvlcomplete", NULL, 0, NULL);
+}
+
+void playCarDamageSound()
+{
+	if (!audioOpened) initAudio();
+	int randomChance = rand() % 2; // 0 or 1 (50% chance)
+	if (randomChance == 0) {
+		mciSendString("stop car_damage", NULL, 0, NULL);
+		mciSendString("seek car_damage to start", NULL, 0, NULL);
+		mciSendString("play car_damage", NULL, 0, NULL);
+	}
 }
 
 void drawOptions()
@@ -717,6 +838,7 @@ void optionsButtonClickHandler() { page = PAGE_OPTIONS; }
 void controlsButtonClickHandler(){ page = PAGE_CONTROLS; }
 void creditsButtonClickHandler() { page = PAGE_CREDITS; }
 void highScoreButtonClickHandler() { page = PAGE_HIGHSCORE; }
+
 void easyButtonClickHandler()
 {
 	setDifficulty(DIFF_EASY);
@@ -866,9 +988,15 @@ void initGame()
 	score.reset();
 	resetDistance();
 	resetLevelCompletion();
+	initHealthPickups();  // Initialize health pickups
+
+	// Initialize boss system for current difficulty
+	enemy.initBossSystem(difficulty);
+
 	gamePaused = false;
 	prevP = false;
 	rageRequirementFailed = false;
+	gameTickCounter = 0;  // Reset game tick counter for boss timing
 }
 
 void drawGame()
@@ -912,6 +1040,9 @@ void drawGame()
 	nitro.drawPickups();
 	nitro.drawMeter();
 
+	// Draw health pickups
+	drawHealthPickups();
+
 	health.draw(SCREEN_W, SCREEN_H);
 	score.draw(SCREEN_W, SCREEN_H);
 	drawDistance();
@@ -922,8 +1053,6 @@ void drawGame()
 	iSetColor(255, 255, 0);
 	iText(SCREEN_W - 680, SCREEN_H - 150, goalText, GLUT_BITMAP_HELVETICA_18);
 
-	// Draw rage requirement
-	// Draw rage requirement - show rage left
 	// Draw rage requirement - show rage left
 	int rageReq = getRageRequirement();
 	int currentScore = score.getScore();
@@ -942,8 +1071,6 @@ void drawGame()
 	int barY = SCREEN_H - 190;
 
 	// Calculate progress based on RAGE LEFT / TOTAL RAGE
-	// So when rage left is high, bar is FULL
-	// When rage left is low, bar is EMPTY
 	double progress = (double)rageLeft / (double)rageReq;
 	if (progress > 1.0) progress = 1.0;
 	if (progress < 0.0) progress = 0.0;
@@ -955,6 +1082,9 @@ void drawGame()
 	// Foreground bar (orange showing remaining rage)
 	iSetColor(255, 100, 0);
 	iFilledRectangle(barX, barY, (int)(barWidth * progress), barHeight);
+
+	// Draw boss warning if needed
+	enemy.drawBossWarning(SCREEN_W, SCREEN_H);
 
 	if (gamePaused) {
 		iSetColor(0, 0, 0);
@@ -990,18 +1120,41 @@ void handleBatSwing() {
 		if (hitIndex >= 0) {
 			enemy.reduceHealth(hitIndex);
 			if (enemy.e[hitIndex].active && enemy.e[hitIndex].health > 0) {
+				// Normal hit (not death)
 				score.addPoints(50);
+			}
+
+			else if (enemy.e[hitIndex].health <= 0) {
+				// Enemy defeated!
+				int points = enemy.getDefeatPoints(hitIndex);
+				int rageReduction = enemy.getRageReduction(hitIndex);
+
+				score.addPoints(points);
+				// Rage reduction is automatic through score system
+
+				// 33% chance to spawn health pickup (only from normal enemies, not boss)
+				if (!enemy.e[hitIndex].isBoss) {
+					int randomChance = rand() % 3; // 0, 1 or 2
+					if (randomChance == 0) { // 33% chance
+						float pickupX = enemy.e[hitIndex].x;
+						float pickupY = enemy.e[hitIndex].y + 320; // Spawn 320 pixels AHEAD (higher Y)
+						spawnHealthPickup(pickupX, pickupY);
+					}
+				}
 			}
 			hitProcessed = true;
 
-			if (hitIndex >= 0 && hitIndex < 3 && enemy.e[hitIndex].active) {
+			if (hitIndex >= 0 && hitIndex < 4 && enemy.e[hitIndex].active) {
 				float pushDir = (enemy.e[hitIndex].x < carX) ? -BAT_KNOCKBACK_FORCE : BAT_KNOCKBACK_FORCE;
 				enemy.e[hitIndex].x += pushDir;
 
+				int enemyW = enemy.e[hitIndex].isBoss ? 140 : 116;
+				int enemyH = enemy.e[hitIndex].isBoss ? 190 : 169;
+
 				if (enemy.e[hitIndex].x < ROAD_LEFT_X)
 					enemy.e[hitIndex].x = (float)ROAD_LEFT_X;
-				if (enemy.e[hitIndex].x > ROAD_RIGHT_X - EnemySystem::ENEMY_W)
-					enemy.e[hitIndex].x = (float)(ROAD_RIGHT_X - EnemySystem::ENEMY_W);
+				if (enemy.e[hitIndex].x > ROAD_RIGHT_X - enemyW)
+					enemy.e[hitIndex].x = (float)(ROAD_RIGHT_X - enemyW);
 
 				enemy.e[hitIndex].y -= 15.0f;
 				if (enemy.e[hitIndex].y < CAR_Y - 100) {
@@ -1074,6 +1227,7 @@ void updateGame()
 
 		return;
 	}
+
 	// ========== LEVEL COMPLETE PAGE HANDLING ==========
 	if (page == PAGE_LEVEL_COMPLETE) {
 		levelCompleteTimer++;
@@ -1089,6 +1243,10 @@ void updateGame()
 		}
 		return;
 	}
+
+	// ========== UPDATE BOSS SYSTEM ==========
+	gameTickCounter++;
+	enemy.updateBossSystem(gameTickCounter);
 
 	// ========== REGULAR GAME LOGIC ==========
 	bool nowEsc = (isKeyPressed(27) != 0);
@@ -1117,12 +1275,13 @@ void updateGame()
 		(float)ROAD_LEFT_X, (float)ROAD_RIGHT_X
 		);
 
-	for (int i = 0; i < 3; i++) {
-		if (enemy.e[i].active) {
+	for (int i = 0; i < 4; i++) {
+		if (enemy.e[i].active && !enemy.e[i].isBoss) {
 			if (enemy.e[i].x < ROAD_LEFT_X) enemy.e[i].x = ROAD_LEFT_X;
 			if (enemy.e[i].x > ROAD_RIGHT_X - EnemySystem::ENEMY_W)
 				enemy.e[i].x = ROAD_RIGHT_X - EnemySystem::ENEMY_W;
 		}
+		// Boss uses its own dimensions, handled in its own update logic
 	}
 
 	if (page != PAGE_GAME) {
@@ -1194,6 +1353,13 @@ void updateGame()
 		);
 
 	updateDistance(nitro.isActive());
+
+	// Update health pickups
+	updateHealthPickups((float)roadSpeed);
+
+	// Check collision with health pickups
+	checkHealthPickupCollision();
+
 	checkLevelCompletion();
 
 	if (levelCompleted) {
@@ -1207,6 +1373,9 @@ void updateGame()
 		blinkTicks = cfg.damageBlinkTicks;
 		health.takeHit();
 
+		// Play car damage sound with 50% chance
+		playCarDamageSound();
+
 		if (health.isGameOver()) {
 			goToGameOver();
 			return;
@@ -1218,17 +1387,29 @@ void updateGame()
 		if (roadSpeed > cfg.maxSpeed) roadSpeed = cfg.maxSpeed;
 	}
 
+	// Enemy car collision
 	if (!damageBlink && enemyCollisionCooldown == 0) {
-		for (int i = 0; i < 3; i++) {
+		for (int i = 0; i < 4; i++) {
 			if (enemy.e[i].active) {
-				if (carX < enemy.e[i].x + EnemySystem::ENEMY_W &&
+				int enemyW = enemy.e[i].isBoss ? 140 : 116;
+				int enemyH = enemy.e[i].isBoss ? 190 : 169;
+
+				if (carX < enemy.e[i].x + enemyW &&
 					carX + CAR_W > enemy.e[i].x &&
-					CAR_Y < enemy.e[i].y + EnemySystem::ENEMY_H &&
+					CAR_Y < enemy.e[i].y + enemyH &&
 					CAR_Y + CAR_H > enemy.e[i].y) {
 
+					int damageAmount = enemy.getCollisionDamage(i);
 					damageBlink = true;
 					blinkTicks = cfg.damageBlinkTicks;
-					health.takeHit();
+
+					// Apply damage multiple times if needed (boss does 2 damage)
+					for (int d = 0; d < damageAmount; d++) {
+						health.takeHit();
+					}
+
+					// Play car damage sound with 50% chance
+					playCarDamageSound();
 
 					if (health.isGameOver()) {
 						goToGameOver();
@@ -1243,8 +1424,8 @@ void updateGame()
 					int pushDir = (carX < enemy.e[i].x) ? -1 : 1;
 					enemy.e[i].x += pushDir * 15.0f;
 					if (enemy.e[i].x < ROAD_LEFT_X) enemy.e[i].x = ROAD_LEFT_X;
-					if (enemy.e[i].x > ROAD_RIGHT_X - EnemySystem::ENEMY_W)
-						enemy.e[i].x = ROAD_RIGHT_X - EnemySystem::ENEMY_W;
+					if (enemy.e[i].x > ROAD_RIGHT_X - enemyW)
+						enemy.e[i].x = ROAD_RIGHT_X - enemyW;
 
 					enemyCollisionCooldown = 30;
 					break;
