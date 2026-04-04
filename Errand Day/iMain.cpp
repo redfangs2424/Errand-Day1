@@ -8,6 +8,7 @@
 #include "HighScore.hpp"
 #include <cstdlib>
 #include <cctype>
+#include <cmath>
 
 int x, y;
 
@@ -31,18 +32,38 @@ const int CAR_H = 169;
 double carX;
 const int CAR_Y = 200;              // uplift distance from bottom
 
-// Bat drawing adjustment
+// ==============================
+//          BAT SYSTEM
+// ==============================
 const int BAT_FRAMES = 10;
-int batImg[BAT_FRAMES];
-const int BAT_EXTRA_W = 24;
-const int BAT_OFFSET_X = -24;
-const int BAT_OFFSET_Y = 0;
 
-// BAT HITBOX CONFIGURATION - INCREASED RANGE
-const int BAT_HITBOX_EXTRA_W = 80;   // Additional width for hitbox (increased from 0)
-const int BAT_HITBOX_EXTRA_H = 30;   // Additional height for hitbox (increased from 0)
-const int BAT_HITBOX_OFFSET_X = -20; // Adjust X position offset for better coverage
-const float BAT_KNOCKBACK_FORCE = 35.0f; // Knockback force when hitting enemies
+// Left swing frames
+int batImgL[BAT_FRAMES];
+
+// Right swing frames
+int batImgR[BAT_FRAMES];
+
+// Left bat: 181x169 vs base 157x169, so draw 24 px extra on left
+const int BAT_EXTRA_W_L = 24;
+const int BAT_OFFSET_X_L = -24;
+const int BAT_OFFSET_Y_L = 0;
+
+// Right bat: 181x169 and left-aligned with default car image
+const int BAT_EXTRA_W_R = 24;
+const int BAT_OFFSET_X_R = 0;
+const int BAT_OFFSET_Y_R = 0;
+
+// Side-specific hitbox tuning
+const int BAT_HITBOX_EXTRA_W = 80;
+const int BAT_HITBOX_EXTRA_H = 30;
+const float BAT_KNOCKBACK_FORCE = 35.0f;
+
+enum BatSwingSide {
+	BAT_SWING_LEFT,
+	BAT_SWING_RIGHT
+};
+
+BatSwingSide currentBatSide = BAT_SWING_LEFT;
 
 bool batPlaying = false;
 int batFrame = 0;
@@ -207,6 +228,9 @@ void handleBatSwing();
 void updateBatAnimation();
 void goToGameOver();
 
+BatSwingSide chooseBatSwingSide();
+int findBestEnemyForBatSwing(BatSwingSide side);
+
 // Health pickup functions
 void initHealthPickups();
 void spawnHealthPickup(float x, float y);
@@ -339,6 +363,85 @@ double clampDouble(double v, double lo, double hi) {
 }
 
 // ==============================
+//      BAT SIDE SELECTION
+// ==============================
+BatSwingSide chooseBatSwingSide()
+{
+	float carCenterX = (float)carX + CAR_W / 2.0f;
+	float carCenterY = (float)CAR_Y + CAR_H / 2.0f;
+
+	float bestScore = 1e9f;
+	BatSwingSide bestSide = BAT_SWING_LEFT;
+	bool found = false;
+
+	for (int i = 0; i < 4; i++) {
+		if (!enemy.e[i].active) continue;
+
+		int enemyW = enemy.e[i].isBoss ? 140 : 116;
+		int enemyH = enemy.e[i].isBoss ? 190 : 169;
+
+		float enemyCenterX = enemy.e[i].x + enemyW / 2.0f;
+		float enemyCenterY = enemy.e[i].y + enemyH / 2.0f;
+
+		float dx = fabsf(enemyCenterX - carCenterX);
+		float dy = fabsf(enemyCenterY - carCenterY);
+
+		// prefer enemies close to player's current vertical zone
+		if (dy > 260.0f) continue;
+
+		float score = dy * 2.0f + dx;
+		if (score < bestScore) {
+			bestScore = score;
+			bestSide = (enemyCenterX < carCenterX) ? BAT_SWING_LEFT : BAT_SWING_RIGHT;
+			found = true;
+		}
+	}
+
+	if (!found) {
+		return BAT_SWING_LEFT;
+	}
+
+	return bestSide;
+}
+
+int findBestEnemyForBatSwing(BatSwingSide side)
+{
+	float carCenterX = (float)carX + CAR_W / 2.0f;
+	float carCenterY = (float)CAR_Y + CAR_H / 2.0f;
+
+	float bestScore = 1e9f;
+	int bestIndex = -1;
+
+	for (int i = 0; i < 4; i++) {
+		if (!enemy.e[i].active) continue;
+
+		int enemyW = enemy.e[i].isBoss ? 140 : 116;
+		int enemyH = enemy.e[i].isBoss ? 190 : 169;
+
+		float enemyCenterX = enemy.e[i].x + enemyW / 2.0f;
+		float enemyCenterY = enemy.e[i].y + enemyH / 2.0f;
+
+		bool isLeft = (enemyCenterX < carCenterX);
+
+		if (side == BAT_SWING_LEFT && !isLeft) continue;
+		if (side == BAT_SWING_RIGHT && isLeft) continue;
+
+		float dx = fabsf(enemyCenterX - carCenterX);
+		float dy = fabsf(enemyCenterY - carCenterY);
+
+		if (dy > 260.0f) continue;
+
+		float score = dy * 2.0f + dx;
+		if (score < bestScore) {
+			bestScore = score;
+			bestIndex = i;
+		}
+	}
+
+	return bestIndex;
+}
+
+// ==============================
 //              DRAW
 // ==============================
 void iDraw()
@@ -428,6 +531,7 @@ void iMouse(int button, int state, int mx, int my)
 	}
 	else if (page == PAGE_GAME) {
 		if (!gamePaused) {
+			currentBatSide = chooseBatSwingSide();
 			batPlaying = true;
 			batFrame = 0;
 		}
@@ -513,16 +617,16 @@ void initImages()
 	carBrakedImg = iLoadImage("Assets\\game\\car_braked.png");
 
 	// BAT
-	batImg[0] = iLoadImage("Assets\\game\\bat\\bat0.png");
-	batImg[1] = iLoadImage("Assets\\game\\bat\\bat1.png");
-	batImg[2] = iLoadImage("Assets\\game\\bat\\bat2.png");
-	batImg[3] = iLoadImage("Assets\\game\\bat\\bat3.png");
-	batImg[4] = iLoadImage("Assets\\game\\bat\\bat4.png");
-	batImg[5] = iLoadImage("Assets\\game\\bat\\bat5.png");
-	batImg[6] = iLoadImage("Assets\\game\\bat\\bat6.png");
-	batImg[7] = iLoadImage("Assets\\game\\bat\\bat7.png");
-	batImg[8] = iLoadImage("Assets\\game\\bat\\bat8.png");
-	batImg[9] = iLoadImage("Assets\\game\\bat\\bat9.png");
+	for (int i = 0; i < BAT_FRAMES; i++) {
+		char pathL[128];
+		char pathR[128];
+
+		sprintf_s(pathL, "Assets\\game\\bat\\bat%d.png", i);
+		sprintf_s(pathR, "Assets\\game\\bat\\bat_r%d.png", i);
+
+		batImgL[i] = iLoadImage(pathL);
+		batImgR[i] = iLoadImage(pathR);
+	}
 
 	// OBSTACLES
 	for (int i = 0; i < OB_COUNT; i++) {
@@ -981,6 +1085,7 @@ void initGame()
 
 	batPlaying = false;
 	batFrame = 0;
+	currentBatSide = BAT_SWING_LEFT;
 
 	nitro.reset();
 	enemy.reset();
@@ -1017,9 +1122,16 @@ void drawGame()
 		}
 		else {
 			if (batPlaying) {
-				iShowImage((int)carX + BAT_OFFSET_X, CAR_Y + BAT_OFFSET_Y,
-					CAR_W + BAT_EXTRA_W, CAR_H,
-					batImg[batFrame]);
+				if (currentBatSide == BAT_SWING_LEFT) {
+					iShowImage((int)carX + BAT_OFFSET_X_L, CAR_Y + BAT_OFFSET_Y_L,
+						CAR_W + BAT_EXTRA_W_L, CAR_H,
+						batImgL[batFrame]);
+				}
+				else {
+					iShowImage((int)carX + BAT_OFFSET_X_R, CAR_Y + BAT_OFFSET_Y_R,
+						CAR_W + BAT_EXTRA_W_R, CAR_H,
+						batImgR[batFrame]);
+				}
 			}
 			else {
 				iShowImage((int)carX, CAR_Y, CAR_W, CAR_H,
@@ -1104,10 +1216,20 @@ void drawGame()
 void handleBatSwing() {
 	if (!batPlaying) return;
 
-	int batX = (int)carX + BAT_OFFSET_X + BAT_HITBOX_OFFSET_X;
-	int batY = CAR_Y + BAT_OFFSET_Y;
-	int batW = CAR_W + BAT_EXTRA_W + BAT_HITBOX_EXTRA_W;
-	int batH = CAR_H + BAT_HITBOX_EXTRA_H;
+	int batX, batY, batW, batH;
+
+	if (currentBatSide == BAT_SWING_LEFT) {
+		batX = (int)carX + BAT_OFFSET_X_L - BAT_HITBOX_EXTRA_W;
+		batY = CAR_Y + BAT_OFFSET_Y_L;
+		batW = (CAR_W / 2) + BAT_EXTRA_W_L + BAT_HITBOX_EXTRA_W;
+		batH = CAR_H + BAT_HITBOX_EXTRA_H;
+	}
+	else {
+		batX = (int)carX + (CAR_W / 2);
+		batY = CAR_Y + BAT_OFFSET_Y_R;
+		batW = (CAR_W / 2) + BAT_EXTRA_W_R + BAT_HITBOX_EXTRA_W;
+		batH = CAR_H + BAT_HITBOX_EXTRA_H;
+	}
 
 	static bool hitProcessed = false;
 
@@ -1116,14 +1238,33 @@ void handleBatSwing() {
 	}
 
 	if (!hitProcessed && batFrame >= 3 && batFrame <= 7) {
-		int hitIndex = enemy.checkBatHit(batX, batY, batW, batH);
+		int hitIndex = -1;
+
+		// Prefer enemy on selected side
+		int preferredEnemy = findBestEnemyForBatSwing(currentBatSide);
+		if (preferredEnemy >= 0) {
+			int enemyW = enemy.e[preferredEnemy].isBoss ? 140 : 116;
+			int enemyH = enemy.e[preferredEnemy].isBoss ? 190 : 169;
+
+			if (batX < enemy.e[preferredEnemy].x + enemyW &&
+				batX + batW > enemy.e[preferredEnemy].x &&
+				batY < enemy.e[preferredEnemy].y + enemyH &&
+				batY + batH > enemy.e[preferredEnemy].y) {
+				hitIndex = preferredEnemy;
+			}
+		}
+
+		// Fallback to generic check inside the side hitbox
+		if (hitIndex < 0) {
+			hitIndex = enemy.checkBatHit(batX, batY, batW, batH);
+		}
+
 		if (hitIndex >= 0) {
 			enemy.reduceHealth(hitIndex);
 			if (enemy.e[hitIndex].active && enemy.e[hitIndex].health > 0) {
 				// Normal hit (not death)
 				score.addPoints(50);
 			}
-
 			else if (enemy.e[hitIndex].health <= 0) {
 				// Enemy defeated!
 				int points = enemy.getDefeatPoints(hitIndex);
@@ -1145,11 +1286,10 @@ void handleBatSwing() {
 			hitProcessed = true;
 
 			if (hitIndex >= 0 && hitIndex < 4 && enemy.e[hitIndex].active) {
-				float pushDir = (enemy.e[hitIndex].x < carX) ? -BAT_KNOCKBACK_FORCE : BAT_KNOCKBACK_FORCE;
+				float pushDir = (currentBatSide == BAT_SWING_LEFT) ? -BAT_KNOCKBACK_FORCE : BAT_KNOCKBACK_FORCE;
 				enemy.e[hitIndex].x += pushDir;
 
 				int enemyW = enemy.e[hitIndex].isBoss ? 140 : 116;
-				int enemyH = enemy.e[hitIndex].isBoss ? 190 : 169;
 
 				if (enemy.e[hitIndex].x < ROAD_LEFT_X)
 					enemy.e[hitIndex].x = (float)ROAD_LEFT_X;
@@ -1293,6 +1433,7 @@ void updateGame()
 	// SPACE key triggers bat swing (edge-triggered)
 	bool nowSpace = (isKeyPressed(' ') != 0);
 	if (nowSpace && !prevSpace) {
+		currentBatSide = chooseBatSwingSide();
 		batPlaying = true;
 		batFrame = 0;
 	}
