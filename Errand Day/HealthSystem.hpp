@@ -37,6 +37,12 @@ struct HealthSystem {
 		if (healthIndex >= GAME_OVER_INDEX) gameOver = true;
 	}
 
+	void increaseHealth() {
+		if (gameOver) return;
+		if (healthIndex > START_INDEX) healthIndex--;
+	}
+
+
 	bool isGameOver() const { return gameOver; }
 
 	// Draw HUD at top-left.
