@@ -136,7 +136,7 @@ Failing to meet both → Game Over.
 
 ## 🙌 Credits
 
-Developed by **Anas & Team**\
+Developed by **Anwarul Azim, Isam Ajwad and Saadab Rashid**\
 Special thanks to contributors and testers 💙
 
 ------------------------------------------------------------------------
