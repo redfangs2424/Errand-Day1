@@ -203,11 +203,23 @@ struct EnemySystem {
 		explosionImg = iLoadImage("Assets\\game\\explosion.png");
 	}
 
-	// Sound effect methods
+	// Sound effect methods - UPDATED with 1/3 and 2/3 probability
 	void playEnemyDestroyedSound() {
-		mciSendString("stop enemy_destroyed", NULL, 0, NULL);
-		mciSendString("seek enemy_destroyed to start", NULL, 0, NULL);
-		mciSendString("play enemy_destroyed", NULL, 0, NULL);
+		// Generate random number between 0 and 2 (3 possibilities)
+		int randomChance = rand() % 3; // 0, 1, or 2
+
+		if (randomChance == 0) {
+			// 1/3 chance - play enemy_destroyed.mp3
+			mciSendString("stop enemy_destroyed", NULL, 0, NULL);
+			mciSendString("seek enemy_destroyed to start", NULL, 0, NULL);
+			mciSendString("play enemy_destroyed", NULL, 0, NULL);
+		}
+		else {
+			// 2/3 chance (1 or 2) - play enemy_destroyed2.mp3
+			mciSendString("stop enemy_destroyed2", NULL, 0, NULL);
+			mciSendString("seek enemy_destroyed2 to start", NULL, 0, NULL);
+			mciSendString("play enemy_destroyed2", NULL, 0, NULL);
+		}
 	}
 
 	void playAnasLaughSound() {
@@ -446,7 +458,7 @@ struct EnemySystem {
 		}
 
 		if (e[enemyIndex].health <= 0 && wasAlive) {
-			// Play enemy destroyed sound
+			// Play enemy destroyed sound with 1/3 and 2/3 probability distribution
 			playEnemyDestroyedSound();
 
 			// Play anas laugh with 25% chance (only on hard difficulty)

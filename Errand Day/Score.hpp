@@ -29,7 +29,8 @@ struct ScoreSystem {
 
 		// Draw score in top-right corner with some padding
 		int textWidth = 150; // Approximate width for positioning
-		iText(screenW - textWidth - 20, screenH - 40, scoreText, GLUT_BITMAP_HELVETICA_18);
+		iText(screenW - 680, screenH - 156, scoreText, GLUT_BITMAP_HELVETICA_18);
+
 	}
 };
 

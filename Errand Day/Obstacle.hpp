@@ -7,12 +7,12 @@
 #define OB_COUNT 10
 #define OB_CAPACITY 6
 
-static int OB_WIDTH[OB_COUNT]  = { 102, 95, 56, 108, 98, 120, 95, 120, 59, 117 };
-static int OB_HEIGHT[OB_COUNT] = {  74, 63,101,  74,100,  76, 63,  76, 76, 108 };
+static int OB_WIDTH[OB_COUNT] = { 102, 95, 56, 108, 98, 120, 95, 120, 59, 117 };
+static int OB_HEIGHT[OB_COUNT] = { 74, 63, 101, 74, 100, 76, 63, 76, 76, 108 };
 
-static int gRoadLeft  = 72;
+static int gRoadLeft = 72;
 static int gRoadRight = 636;
-static int gScreenH   = 1080;
+static int gScreenH = 1080;
 
 // Random "bag" to avoid repeats
 static int gBag[OB_COUNT];
@@ -74,10 +74,10 @@ static float laneX(int lane, int obstacleWidth) {
 
 // Collision
 static int collision(float ax, float ay, float aw, float ah,
-	                 float bx, float by, float bw, float bh)
+	float bx, float by, float bw, float bh)
 {
 	return (ax < bx + bw) && (ax + aw > bx) &&
-		   (ay < by + bh) && (ay + ah > by);
+		(ay < by + bh) && (ay + ah > by);
 }
 
 static void setObstacleSpawnConfig(const ObstacleSpawnConfig& cfg)
@@ -121,7 +121,7 @@ static int activeObstacleCount()
 {
 	int c = 0;
 	for (int i = 0; i < OB_CAPACITY; i++)
-		if (gObs[i].active) c++;
+	if (gObs[i].active) c++;
 	return c;
 }
 

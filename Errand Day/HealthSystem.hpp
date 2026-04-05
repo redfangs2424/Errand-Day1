@@ -42,20 +42,18 @@ struct HealthSystem {
 		if (healthIndex > START_INDEX) healthIndex--;
 	}
 
-
 	bool isGameOver() const { return gameOver; }
 
-	// Draw HUD at top-left.
 	void draw(int screenW, int screenH) const {
 		if (gameOver) return;
 		if (healthIndex < 1 || healthIndex >= GAME_OVER_INDEX) return;
 		int img = hpImg[healthIndex];
 		if (img < 0) return;
 
-		const int W = 170;
-		const int H = 55;
-		const int X = 18;
-		const int Y = screenH - H - 36;
+		const int W = 56;
+		const int H = 56;
+		const int X = 612;
+		const int Y = 48;
 		iShowImage(X, Y, W, H, img);
 	}
 };

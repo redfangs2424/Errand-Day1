@@ -122,9 +122,10 @@ struct NitroSystem {
     }
 
     // Helpers for your drawGame()
-    bool isActive() const { return allowed && active; }
-    int  carDrawYOffset() const { return (isActive() ? nitroYOffset : 0); }
-    int  carDrawH(int normalCarH) const { return (isActive() ? nitroCarH : normalCarH); }
+	bool isActive() const { return allowed && active; }
+	void deactivate() { active = false; drainCounter = 0; }
+	int  carDrawYOffset() const { return (isActive() ? nitroYOffset : 0); }
+	int  carDrawH(int normalCarH) const { return (isActive() ? nitroCarH : normalCarH); }
 
     // Meter fill from pickup
     void applyPickup(int type) {

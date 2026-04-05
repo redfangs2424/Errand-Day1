@@ -66,6 +66,15 @@
   <ItemGroup>
     <ClCompile Include="iMain.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Button.hpp" />
+    <ClInclude Include="Enemy.hpp" />
+    <ClInclude Include="HighScore.hpp" />
+    <ClInclude Include="Score.hpp" />
+    <ClInclude Include="HealthSystem.hpp" />
+    <ClInclude Include="Nitro.hpp" />
+    <ClInclude Include="Obstacle.hpp" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
