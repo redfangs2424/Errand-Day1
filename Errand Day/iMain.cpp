@@ -1465,7 +1465,7 @@ void drawGame()
 	const char* diffName = (difficulty == DIFF_EASY) ? "Easy" : (difficulty == DIFF_MEDIUM) ? "Medium" : "Hard";
 
 	//sprintf_s(txt, "Mode: %s   Speed: %.1f ", diffName, roadSpeed);
-	iText(10, SCREEN_H - 25, txt, GLUT_BITMAP_HELVETICA_18);
+	//iText(10, SCREEN_H - 25, txt, GLUT_BITMAP_HELVETICA_18);
 }
 
 void handleBatSwing() {
