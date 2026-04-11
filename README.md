@@ -103,20 +103,33 @@ Failing to meet both → Game Over.
 
 ------------------------------------------------------------------------
 
-## 🛠️ Built With
+## 🛠️ Project Details
 
--   **C++**
--   **iGraphics Library**
--   Windows multimedia (`mciSendString`) for audio
+IDE: Visual studio 2010/2013
+
+Language: C,C++.
+
+Platform : Windows PC.
+
+Genre : 2D action adventure
+
 
 ------------------------------------------------------------------------
 
 ## ▶️ How to Run
 
-1.  Make sure you have **iGraphics set up**
-2.  Open the project in your C++ IDE (CodeBlocks / Visual Studio)
-3.  Build and run `iMain.cpp`
+Make sure you have the following installed:
+- **Visual Studio 2013**
+- **MinGW Compiler** (if needed)
+- **iGraphics Library** (included in this repository)
 
+
+Open the project in Visual Studio 2013
+- Open Visual Studio 2013.
+- Go to File → Open → Project/Solution.
+- Locate and select the .sln file from the cloned repository.
+- Click Build → Build Solution
+- Run the program by clicking Debug → Start Without Debugging
 ------------------------------------------------------------------------
 
 ## 🏆 High Scores
@@ -135,10 +148,11 @@ Failing to meet both → Game Over.
 ------------------------------------------------------------------------
 
 ## 🙌 Credits
-
-Developed by **Anwarul Azim, Isam Ajwad and Saadab Rashid**\
+Project Contributors:
+1. Isam Ajwad
+2. Md.Anwarul Azim
+3. Saadab Rashid
 Special thanks to contributors and testers 💙
-
 ------------------------------------------------------------------------
 
 ## 🚀 Future Improvements
@@ -147,3 +161,17 @@ Special thanks to contributors and testers 💙
 -   Better enemy AI
 -   Animations & effects
 -   Mobile support
+
+## Screenshots
+
+### **Menu**
+<img src="https://github.com/user-attachments/assets/812b978b-b4f9-4cc2-8116-067f85e943bd" width="200" height="200">
+
+### **Character**
+<img src="https://github.com/user-attachments/assets/5c8a5fbb-6ebf-48cd-bff0-8235e79d9773" width="200" height="200">
+
+## Youtube Link
+[CSE 1200 Project: The Fallen Kingdom](https://www.youtube.com/)
+
+## Project Report
+[Project Report: The Fallen Kingdom](https://drive.google.com/drive/u/1/my-drive)
