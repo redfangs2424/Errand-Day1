@@ -169,7 +169,7 @@ Special thanks to contributors and testers 💙
 <img src="https://github.com/mdanwarulazim/Errand-Day/blob/main/Errand%20Day/Assets/home/Menu.png" width="200" height="294">
 
 ### **Character**
-<img src="https://github.com/user-attachments/assets/5c8a5fbb-6ebf-48cd-bff0-8235e79d9773" width="200" height="200">
+<img src="https://github.com/mdanwarulazim/Errand-Day/blob/main/Errand%20Day/Assets/game/car.png" width="157" height="169">
 
 ## Youtube Link
 [CSE 1200 Project: The Fallen Kingdom](https://www.youtube.com/)
