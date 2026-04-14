@@ -52,8 +52,8 @@ struct HealthSystem {
 
 		const int W = 56;
 		const int H = 56;
-		const int X = 612;
-		const int Y = 48;
+		const int X = 326;
+		const int Y = 950;
 		iShowImage(X, Y, W, H, img);
 	}
 };
